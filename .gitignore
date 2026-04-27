@@ -1,0 +1,30 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment and Secrets
+.env
+.env.local
+*.pem
+github_private_key.pem
+
+# OS & IDEs
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
+dump.rdb
