@@ -32,16 +32,21 @@ except Exception as e:
 
 log_handler = logging.StreamHandler(sys.stdout)
 if not settings.DEBUG:
-    log_handler.setFormatter(jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
-logging.basicConfig(handlers=[log_handler], level=logging.INFO if not settings.DEBUG else logging.DEBUG)
+    log_handler.setFormatter(
+        jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+logging.basicConfig(
+    handlers=[log_handler], level=logging.INFO if not settings.DEBUG else logging.DEBUG
+)
 logger = logging.getLogger(__name__)
 
 # --- OpenTelemetry Setup ---
-resource = Resource(attributes={SERVICE_NAME: "lucai-api"})
+resource = Resource(attributes={SERVICE_NAME: "revix-api"})
 provider = TracerProvider(resource=resource)
 processor = BatchSpanProcessor(ConsoleSpanExporter())
 provider.add_span_processor(processor)
 trace.set_tracer_provider(provider)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -49,9 +54,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("✅ Configuration validated: %s", settings.AI_PROVIDER)
     await db_core.connect()
     metrics_task = asyncio.create_task(queue_metrics_loop())
-    
+
     yield
-    
+
     # Shutdown
     metrics_task.cancel()
     try:
@@ -64,7 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 FastAPIInstrumentor.instrument_app(app)
 
-meter = metrics.get_meter("lucai.metrics")
+meter = metrics.get_meter("revix.metrics")
 webhook_duration = meter.create_histogram("webhook.ingestion.duration_ms")
 queue_dwell = meter.create_histogram("queue.dwell.duration_ms")
 
@@ -85,7 +90,9 @@ async def queue_metrics_loop() -> None:
                     row_active = await cur.fetchone()
                     active = row_active[0] if row_active else 0
 
-                    logger.info("Queue metrics", extra={"queue_depth": pending, "active_workers": active})
+                    logger.info(
+                        "Queue metrics", extra={"queue_depth": pending, "active_workers": active}
+                    )
         except Exception:
             pass
         await asyncio.sleep(15)
@@ -94,11 +101,9 @@ async def queue_metrics_loop() -> None:
 def verify_signature(body: bytes, signature: str) -> None:
     if not signature:
         raise HTTPException(status_code=401, detail="Missing signature")
-    
+
     expected_signature = hmac.new(
-        settings.GITHUB_WEBHOOK_SECRET.encode(),
-        body,
-        hashlib.sha256
+        settings.GITHUB_WEBHOOK_SECRET.encode(), body, hashlib.sha256
     ).hexdigest()
 
     if not hmac.compare_digest(f"sha256={expected_signature}", signature):
@@ -107,9 +112,7 @@ def verify_signature(body: bytes, signature: str) -> None:
 
 @app.post("/api/webhooks/github")
 async def github_webhook(
-    request: Request,
-    x_github_event: str = Header(...),
-    x_hub_signature_256: str = Header(None)
+    request: Request, x_github_event: str = Header(...), x_hub_signature_256: str = Header(None)
 ) -> dict[str, str]:
     start_time = time.time()
     body = await request.body()
@@ -136,32 +139,43 @@ async def github_webhook(
                 try:
                     enqueued = await asyncio.wait_for(
                         queue_repo.enqueue_if_new(
-                            sha=sha, repo=repo, pull_number=num,
-                            installation_id=inst_id, trace_context=trace_context
+                            sha=sha,
+                            repo=repo,
+                            pull_number=num,
+                            installation_id=inst_id,
+                            trace_context=trace_context,
                         ),
-                        timeout=3.0
+                        timeout=3.0,
                     )
                     if enqueued:
-                        logger.info("Enqueued job", extra={"repo": repo, "pr_number": num, "commit_sha": sha})
+                        logger.info(
+                            "Enqueued job",
+                            extra={"repo": repo, "pr_number": num, "commit_sha": sha},
+                        )
                         webhook_duration.record((time.time() - start_time) * 1000)
                         return {"msg": "accepted"}
                     else:
                         webhook_duration.record((time.time() - start_time) * 1000)
                         return {"msg": "already exists"}
                 except TimeoutError as err:
-                    raise HTTPException(status_code=503, detail="Database busy, please retry") from err
+                    raise HTTPException(
+                        status_code=503, detail="Database busy, please retry"
+                    ) from err
 
     elif x_github_event == "issue_comment":
         action = payload.get("action")
         if action == "created":
             comment_body = payload["comment"]["body"].strip().lower()
-            if comment_body in ("/lucai-ignore", "/lucai-approve", "/lucai-ok"):
+            if comment_body in ("/revix-ignore", "/revix-approve", "/revix-ok"):
                 repo = payload["repository"]["full_name"]
                 num = payload["issue"]["number"]
                 inst_id = payload["installation"]["id"]
-                
-                logger.info("Override command detected", extra={"repo": repo, "pr_number": num, "command": comment_body})
-                
+
+                logger.info(
+                    "Override command detected",
+                    extra={"repo": repo, "pr_number": num, "command": comment_body},
+                )
+
                 github = GitHubService()
                 try:
                     token = await github.get_token(inst_id)
@@ -175,12 +189,17 @@ async def github_webhook(
                             output={
                                 "title": "Manual Override: Approved",
                                 "summary": f"Review status overridden by user comment: {comment_body}",
-                                "text": "The quality gate has been manually bypassed."
-                            }
+                                "text": "The quality gate has been manually bypassed.",
+                            },
                         )
-                        logger.info("Successfully overridden check run", extra={"check_run_id": check_run_id})
+                        logger.info(
+                            "Successfully overridden check run",
+                            extra={"check_run_id": check_run_id},
+                        )
                     else:
-                        logger.warning("No check run found to override", extra={"repo": repo, "pr_number": num})
+                        logger.warning(
+                            "No check run found to override", extra={"repo": repo, "pr_number": num}
+                        )
                 except Exception as e:
                     logger.error("Failed to perform override: %s", e)
                 finally:

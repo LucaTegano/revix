@@ -1,7 +1,7 @@
 .PHONY: help install db web worker lint test clean migrations
 
 help:
-	@echo "🛠️  LucAI Development CLI (Postgres-Native)"
+	@echo "🛠️  Revix Development CLI (Postgres-Native)"
 	@echo "------------------------------------------"
 	@echo "make setup      - Full interactive setup"
 	@echo "make install    - Install dependencies"
@@ -21,7 +21,7 @@ install:
 
 
 db:
-	docker run -d --name lucai-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=lucai -p 5432:5432 postgres:18-alpine || docker start lucai-db
+	docker run -d --name revix-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=revix -p 5432:5432 postgres:18-alpine || docker start revix-db
 
 migrations:
 	alembic upgrade head

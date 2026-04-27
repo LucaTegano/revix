@@ -22,8 +22,12 @@ db_service = queue_repo
 
 log_handler = logging.StreamHandler(sys.stdout)
 if not settings.DEBUG:
-    log_handler.setFormatter(jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
-logging.basicConfig(handlers=[log_handler], level=logging.INFO if not settings.DEBUG else logging.DEBUG)
+    log_handler.setFormatter(
+        jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+logging.basicConfig(
+    handlers=[log_handler], level=logging.INFO if not settings.DEBUG else logging.DEBUG
+)
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
@@ -35,7 +39,7 @@ class ReviewWorker:
         self.worker_id = f"worker-{os.uname().nodename}-{uuid.uuid4().hex[:6]}"
         self._tasks: set[asyncio.Task[Any]] = set()
         self._semaphore = asyncio.Semaphore(concurrency)
-        self._active_jobs: dict[str, dict[str, Any]] = {} # job_id -> metadata (fence_token, etc)
+        self._active_jobs: dict[str, dict[str, Any]] = {}  # job_id -> metadata (fence_token, etc)
 
     async def run_forever(self) -> None:
         logger.info("🚀 %s started. Concurrency: %d", self.worker_id, self._semaphore._value)
@@ -55,16 +59,16 @@ class ReviewWorker:
         while self.running:
             try:
                 await self._semaphore.acquire()
-                if not self.running: 
+                if not self.running:
                     self._semaphore.release()
                     break
 
                 job = await queue_repo.claim_job(self.worker_id)
                 if job:
-                    job_id_str = str(job['id'])
+                    job_id_str = str(job["id"])
                     self._active_jobs[job_id_str] = {
-                        'fence_token': job['fence_token'],
-                        'commit_sha': job['commit_sha']
+                        "fence_token": job["fence_token"],
+                        "commit_sha": job["commit_sha"],
                     }
                     task = asyncio.create_task(self._safe_process_job(job))
                     self._tasks.add(task)
@@ -83,19 +87,21 @@ class ReviewWorker:
     async def shutdown(self) -> None:
         """Exact sequence for graceful shutdown."""
         logger.info("🛑 Initiating graceful shutdown sequence...")
-        
+
         if self._active_jobs:
             logger.info("⏳ Waiting %ds for active jobs...", settings.WORKER_SHUTDOWN_TIMEOUT)
             processing_tasks = [t for t in self._tasks if t.get_name() != "reconciliation"]
             if processing_tasks:
-                _, pending = await asyncio.wait(processing_tasks, timeout=float(settings.WORKER_SHUTDOWN_TIMEOUT))
+                _, pending = await asyncio.wait(
+                    processing_tasks, timeout=float(settings.WORKER_SHUTDOWN_TIMEOUT)
+                )
                 if pending:
                     for task in pending:
                         task.cancel()
-            
+
             for job_id_str, meta in list(self._active_jobs.items()):
                 try:
-                    await queue_repo.release_job(uuid.UUID(job_id_str), meta['fence_token'])
+                    await queue_repo.release_job(uuid.UUID(job_id_str), meta["fence_token"])
                     logger.info("✅ Released job %s", job_id_str)
                 except Exception:
                     logger.error("❌ Failed to release job %s", job_id_str)
@@ -104,7 +110,7 @@ class ReviewWorker:
             for t in self._tasks:
                 t.cancel()
             await asyncio.gather(*self._tasks, return_exceptions=True)
-        
+
         await db_core.disconnect()
         logger.info("👋 Shutdown complete.")
 
@@ -112,7 +118,7 @@ class ReviewWorker:
         self.running = False
 
     async def _safe_process_job(self, job: dict[str, Any]) -> None:
-        job_id_str = str(job['id'])
+        job_id_str = str(job["id"])
         try:
             await self.process_job(job)
         finally:
@@ -130,21 +136,31 @@ class ReviewWorker:
                 logger.error("Heartbeat error for %s", sha)
 
     async def process_job(self, job: dict[str, Any]) -> None:
-        job_id, sha, repo, pr_num, fence = job['id'], job['commit_sha'], job['repo_full_name'], job['pr_number'], job['fence_token']
+        job_id, sha, repo, pr_num, fence = (
+            job["id"],
+            job["commit_sha"],
+            job["repo_full_name"],
+            job["pr_number"],
+            job["fence_token"],
+        )
         payload = json.loads(job["payload"]) if isinstance(job["payload"], str) else job["payload"]
         inst_id = payload["installation_id"]
-        trace_ctx = json.loads(job["otel_context"]) if isinstance(job.get("otel_context"), str) else (job.get("otel_context") or {})
+        trace_ctx = (
+            json.loads(job["otel_context"])
+            if isinstance(job.get("otel_context"), str)
+            else (job.get("otel_context") or {})
+        )
 
         heartbeat = asyncio.create_task(self._run_heartbeat(job_id, sha))
         parent_context = propagate.extract(trace_ctx)
-        
+
         with tracer.start_as_current_span("worker.process_job", context=parent_context) as span:
             span.set_attributes({"commit_sha": sha, "repo": repo, "worker_id": self.worker_id})
             github = GitHubService()
             check_run_id = None
             try:
                 token = await github.get_token(inst_id)
-                
+
                 # Create Check Run (The "Yellow Circle")
                 try:
                     check_run_id = await github.create_check_run(repo, sha, token)
@@ -158,8 +174,8 @@ class ReviewWorker:
                 # Index for call graph
                 all_symbols, all_refs = [], []
                 for f in pr_files:
-                    if 'patch' in f:
-                        s, r = self.ai.indexer.index_file(f['filename'], f['patch'])
+                    if "patch" in f:
+                        s, r = self.ai.indexer.index_file(f["filename"], f["patch"])
                         all_symbols.extend([vars(x) for x in s])
                         all_refs.extend([vars(x) for x in r])
                 if all_symbols or all_refs:
@@ -167,27 +183,37 @@ class ReviewWorker:
 
                 review_result = await self.ai.analyze_diff(diff, repo, pr_files)
 
-                # Filter comments for inline review (Noise Reduction)
-                # Only WARNING and CRITICAL are posted as inline comments
-                inline_comments = [c for c in review_result.comments if c.severity in ("WARNING", "CRITICAL")]
-                info_count = len([c for c in review_result.comments if c.severity == "INFO"])
+                # Aggregate comments into the main body instead of inline
+                warnings_and_criticals = [
+                    c for c in review_result.comments if c.severity in ("WARNING", "CRITICAL")
+                ]
 
                 # Conclusion based on score
                 # Score >= 80 is success, < 80 is failure (blocking merge if required)
                 conclusion = "success" if review_result.score >= 80 else "failure"
-                
+
                 body = (
-                    f"### 🔍 AI Review (v2)\n\n"
+                    f"### 🔍 Revix\n\n"
                     f"**Quality Score: {review_result.score}/100**\n\n"
                     f"{review_result.summary}\n\n"
                 )
-                if info_count > 0:
-                    body += f"💡 *Note: {info_count} minor INFO-level suggestions were found but suppressed to reduce noise.*\n"
+
+                if warnings_and_criticals:
+                    body += "### ⚠️ Findings\n\n"
+                    for c in warnings_and_criticals:
+                        icon = "🚨" if c.severity == "CRITICAL" else "⚠️"
+                        body += (
+                            f"- {icon} **{c.severity}** in `{c.path}` (Line {c.line}): {c.body}\n"
+                        )
+                    body += "\n"
 
                 await github.post_review(
-                    repo=repo, pull_number=pr_num, commit_id=sha,
-                    comments=[c.model_dump() for c in inline_comments],
-                    token=token, body=body
+                    repo=repo,
+                    pull_number=pr_num,
+                    commit_id=sha,
+                    comments=[],  # Force single solid comment
+                    token=token,
+                    body=body,
                 )
 
                 if check_run_id:
@@ -197,10 +223,10 @@ class ReviewWorker:
                         token=token,
                         conclusion=conclusion,
                         output={
-                            "title": f"LucAI Review: {review_result.score}/100",
+                            "title": f"Revix Review: {review_result.score}/100",
                             "summary": review_result.summary,
-                            "text": f"Found {len(review_result.comments)} violations."
-                        }
+                            "text": f"Found {len(review_result.comments)} violations.",
+                        },
                     )
 
                 await queue_repo.finalize_job(job_id, fence, "SUCCESS", review_result.model_dump())
@@ -209,10 +235,11 @@ class ReviewWorker:
 
             except Exception as e:
                 import time
-                delay = 60 * (job.get('attempt_count', 1))
-                if hasattr(e, 'response') and hasattr(e.response, 'headers'):
-                    retry_after = e.response.headers.get('retry-after')
-                    x_ratelimit_reset = e.response.headers.get('x-ratelimit-reset')
+
+                delay = 60 * (job.get("attempt_count", 1))
+                if hasattr(e, "response") and hasattr(e.response, "headers"):
+                    retry_after = e.response.headers.get("retry-after")
+                    x_ratelimit_reset = e.response.headers.get("x-ratelimit-reset")
                     if retry_after:
                         delay = int(retry_after)
                     elif x_ratelimit_reset:
@@ -225,13 +252,18 @@ class ReviewWorker:
                     logger.exception("Processing failed", extra={"commit_sha": sha})
                     span.record_exception(e)
                     span.set_status(Status(StatusCode.ERROR))
-                    
+
                     if check_run_id:
                         try:
                             await github.update_check_run(
-                                repo=repo, check_run_id=check_run_id, token=token,
+                                repo=repo,
+                                check_run_id=check_run_id,
+                                token=token,
                                 conclusion="failure",
-                                output={"title": "Review Failed", "summary": f"System Error: {str(e)}"}
+                                output={
+                                    "title": "Review Failed",
+                                    "summary": f"System Error: {str(e)}",
+                                },
                             )
                         except Exception:
                             logger.error("Failed to update check run on error")
@@ -252,31 +284,42 @@ class ReviewWorker:
                     github = GitHubService()
                     try:
                         for job in reconciled:
-                            if job.get('github_check_run_id') and job['status'] in ('dead', 'pending'):
+                            if job.get("github_check_run_id") and job["status"] in (
+                                "dead",
+                                "pending",
+                            ):
                                 # If it's dead or being retried, we should update the check run if it was in progress
                                 try:
-                                    payload = json.loads(job['payload']) if isinstance(job['payload'], str) else job['payload']
-                                    inst_id = payload.get('installation_id')
-                                    if not inst_id: continue
-                                    
+                                    payload = (
+                                        json.loads(job["payload"])
+                                        if isinstance(job["payload"], str)
+                                        else job["payload"]
+                                    )
+                                    inst_id = payload.get("installation_id")
+                                    if not inst_id:
+                                        continue
+
                                     token = await github.get_token(inst_id)
-                                    conclusion = "failure" if job['status'] == 'dead' else "action_required"
+                                    conclusion = (
+                                        "failure" if job["status"] == "dead" else "action_required"
+                                    )
                                     summary = "Job stalled or worker died."
-                                    if job['status'] == 'pending':
+                                    if job["status"] == "pending":
                                         summary += " Retrying analysis..."
-                                    
+
                                     await github.update_check_run(
-                                        repo=job['repo_full_name'],
-                                        check_run_id=job['github_check_run_id'],
+                                        repo=job["repo_full_name"],
+                                        check_run_id=job["github_check_run_id"],
                                         token=token,
                                         conclusion=conclusion,
-                                        output={
-                                            "title": "Review Stalled",
-                                            "summary": summary
-                                        }
+                                        output={"title": "Review Stalled", "summary": summary},
                                     )
                                 except Exception as e:
-                                    logger.warning("Failed to cleanup Check Run %s: %s", job.get('github_check_run_id'), e)
+                                    logger.warning(
+                                        "Failed to cleanup Check Run %s: %s",
+                                        job.get("github_check_run_id"),
+                                        e,
+                                    )
                     finally:
                         await github.close()
             except Exception:

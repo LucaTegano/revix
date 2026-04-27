@@ -19,14 +19,11 @@ class AIProvider(str, Enum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore"
+        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
     # --- Project Settings ---
-    PROJECT_NAME: str = "LucAI"
+    PROJECT_NAME: str = "Revix"
     DEBUG: bool = False  # Secure default
 
     # --- AI Configuration ---
@@ -49,25 +46,25 @@ class Settings(BaseSettings):
     GITHUB_APP_ID: int
     GITHUB_WEBHOOK_SECRET: str
     GITHUB_APP_PRIVATE_KEY_B64: str
-    GITHUB_BOT_NAME: str = "lucai-review"
-    
+    GITHUB_BOT_NAME: str = "revix"
+
     # --- LLM Fallbacks ---
     AI_FALLBACK_MODELS: list[str] = Field(default_factory=list)
 
     # --- Database & Concurrency ---
     DATABASE_URL: str = Field(
-        default="postgresql://postgres:postgres@localhost:5432/lucai",
-        description="PostgreSQL connection string"
+        default="postgresql+psycopg://postgres:postgres@localhost:5432/revix",
+        description="PostgreSQL connection string",
     )
     DB_POOL_MIN_SIZE: int = 10
     WORKER_CONCURRENCY: int = 5
     WORKER_SHUTDOWN_TIMEOUT: int = 30  # Matches K8s default grace period
-    
+
     @model_validator(mode="after")
     def validate_setup(self) -> "Settings":
         """Ensures all required fields for the active provider are present."""
         errors = []
-        
+
         # 1. AI Provider Validation
         required_keys = {
             AIProvider.GEMINI: self.GEMINI_API_KEY,
@@ -76,16 +73,18 @@ class Settings(BaseSettings):
             AIProvider.OPENROUTER: self.OPENROUTER_API_KEY,
             AIProvider.CUSTOM: self.AI_API_KEY,
         }
-        
+
         if not required_keys.get(self.AI_PROVIDER):
-            errors.append(f"❌ AI_PROVIDER is set to '{self.AI_PROVIDER.value}', but {self.AI_PROVIDER.name}_API_KEY is missing.")
+            errors.append(
+                f"❌ AI_PROVIDER is set to '{self.AI_PROVIDER.value}', but {self.AI_PROVIDER.name}_API_KEY is missing."
+            )
 
         # 2. GitHub Validation
         if not self.GITHUB_APP_ID:
             errors.append("❌ GITHUB_APP_ID is missing.")
         if not self.GITHUB_WEBHOOK_SECRET:
             errors.append("❌ GITHUB_WEBHOOK_SECRET is missing.")
-        
+
         # 3. Private Key Validation
         if not self.GITHUB_APP_PRIVATE_KEY_B64:
             errors.append("❌ GITHUB_APP_PRIVATE_KEY_B64 is missing.")
@@ -97,13 +96,14 @@ class Settings(BaseSettings):
 
         # 4. Auto-detect Docker environment for Database
         import os
+
         if os.path.exists("/.dockerenv") and "localhost" in self.DATABASE_URL:
             self.DATABASE_URL = self.DATABASE_URL.replace("localhost", "db")
 
         if errors:
             error_msg = "\n".join(errors)
             raise ValueError(f"Configuration Errors Found:\n{error_msg}")
-            
+
         return self
 
     @property
@@ -136,12 +136,12 @@ def get_settings() -> Settings:
         print("👉 Run 'make setup' or check your .env file.\n")
         raise SystemExit(1) from e
 
+
 settings = get_settings()
 
 if __name__ == "__main__":
     # If run directly, validate and print status
     print(f"✅ Configuration Validated for project: {settings.PROJECT_NAME}")
     print(f"🤖 AI Provider: {settings.AI_PROVIDER.value}")
-    print(f"📦 Database: {settings.DATABASE_URL.split('@')[-1]}") # Hide credentials
+    print(f"📦 Database: {settings.DATABASE_URL.split('@')[-1]}")  # Hide credentials
     print("🔑 GitHub Key: Base64 key loaded successfully")
-

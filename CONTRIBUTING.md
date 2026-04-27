@@ -1,4 +1,4 @@
-# 🤝 Contributing to LucAI
+# 🤝 Contributing to Revix
 
 We love contributions! To maintain high code quality, please follow these guidelines.
 
@@ -49,4 +49,4 @@ Before diving into the code, please read:
 Use GitHub Issues to report bugs or suggest features. Provide context, including logs and steps to reproduce.
 
 ---
-*Thank you for helping us improve LucAI!*
+*Thank you for helping us improve Revix!*

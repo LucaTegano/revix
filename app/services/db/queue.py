@@ -11,6 +11,7 @@ from app.services.db.core import db_core
 
 logger = logging.getLogger(__name__)
 
+
 class JobQueueRepository:
     def _generate_lock_id(self, sha: str) -> int:
         digest = hashlib.md5(sha.encode()).digest()
@@ -23,7 +24,7 @@ class JobQueueRepository:
         repo: str,
         pull_number: int,
         installation_id: int,
-        trace_context: dict[str, Any] | None = None
+        trace_context: dict[str, Any] | None = None,
     ) -> bool:
         lock_id = self._generate_lock_id(sha)
         pool = db_core.get_pool()
@@ -33,9 +34,7 @@ class JobQueueRepository:
             async with conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT pg_advisory_xact_lock(%s)", (lock_id,))
-                    await cur.execute(
-                        "SELECT 1 FROM review_records WHERE commit_sha = %s", (sha,)
-                    )
+                    await cur.execute("SELECT 1 FROM review_records WHERE commit_sha = %s", (sha,))
                     exists = await cur.fetchone()
                     if exists:
                         return False
@@ -52,7 +51,13 @@ class JobQueueRepository:
                         VALUES (%s, %s, %s, %s, %s, 'pending', 0)
                         ON CONFLICT (commit_sha) DO NOTHING
                         """,
-                        (sha, pull_number, repo, json.dumps(payload), json.dumps(trace_context or {}))
+                        (
+                            sha,
+                            pull_number,
+                            repo,
+                            json.dumps(payload),
+                            json.dumps(trace_context or {}),
+                        ),
                     )
                     return True
 
@@ -86,7 +91,7 @@ class JobQueueRepository:
                             VALUES (%s, %s, NOW())
                             ON CONFLICT (job_id) DO UPDATE SET heartbeat_at = NOW(), worker_id = %s
                             """,
-                            (row['id'], worker_id, worker_id)
+                            (row["id"], worker_id, worker_id),
                         )
                         return cast(dict[str, Any], row)
                     return None
@@ -98,10 +103,10 @@ class JobQueueRepository:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "SELECT status FROM jobs WHERE id = %s AND worker_id = %s",
-                        (job_id, worker_id)
+                        (job_id, worker_id),
                     )
                     row = await cur.fetchone()
-                    if not row or row[0] != 'processing':
+                    if not row or row[0] != "processing":
                         return False
 
                     await cur.execute(
@@ -110,7 +115,7 @@ class JobQueueRepository:
                         SET heartbeat_at = NOW()
                         WHERE job_id = %s AND worker_id = %s
                         """,
-                        (job_id, worker_id)
+                        (job_id, worker_id),
                     )
                     return True
 
@@ -122,7 +127,7 @@ class JobQueueRepository:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         "UPDATE jobs SET github_check_run_id = %s WHERE id = %s",
-                        (check_run_id, job_id)
+                        (check_run_id, job_id),
                     )
 
     async def get_latest_check_run_id(self, repo: str, pr_number: int) -> int | None:
@@ -138,7 +143,7 @@ class JobQueueRepository:
                         AND github_check_run_id IS NOT NULL
                         ORDER BY created_at DESC LIMIT 1
                         """,
-                        (repo, pr_number)
+                        (repo, pr_number),
                     )
                     row = await cur.fetchone()
                     return row[0] if row else None
@@ -148,7 +153,7 @@ class JobQueueRepository:
         job_id: uuid.UUID,
         fence_token: int,
         status: str,
-        ai_feedback: dict[str, Any] | None = None
+        ai_feedback: dict[str, Any] | None = None,
     ) -> None:
         pool = db_core.get_pool()
         async with pool.connection() as conn:
@@ -161,7 +166,12 @@ class JobQueueRepository:
                         WHERE id = %s AND fence_token = %s
                         RETURNING id, commit_sha, pr_number, repo_full_name
                         """,
-                        (status, json.dumps(ai_feedback) if ai_feedback else None, job_id, fence_token)
+                        (
+                            status,
+                            json.dumps(ai_feedback) if ai_feedback else None,
+                            job_id,
+                            fence_token,
+                        ),
                     )
                     job = await cur.fetchone()
 
@@ -179,15 +189,22 @@ class JobQueueRepository:
                         ON CONFLICT (commit_sha) DO UPDATE SET feedback = EXCLUDED.feedback
                         """,
                         (
-                            job['id'], job['commit_sha'], job['pr_number'], job['repo_full_name'],
-                            json.dumps(ai_feedback) if ai_feedback else '{}',
-                            settings.AI_MODEL_MAP, settings.AI_MODEL_REDUCE, 1
-                        )
+                            job["id"],
+                            job["commit_sha"],
+                            job["pr_number"],
+                            job["repo_full_name"],
+                            json.dumps(ai_feedback) if ai_feedback else "{}",
+                            settings.AI_MODEL_MAP,
+                            settings.AI_MODEL_REDUCE,
+                            1,
+                        ),
                     )
 
                     await cur.execute("DELETE FROM worker_heartbeats WHERE job_id = %s", (job_id,))
 
-    async def release_job(self, job_id: uuid.UUID, fence_token: int, delay_seconds: int = 0) -> None:
+    async def release_job(
+        self, job_id: uuid.UUID, fence_token: int, delay_seconds: int = 0
+    ) -> None:
         pool = db_core.get_pool()
         async with pool.connection() as conn:
             async with conn:
@@ -201,11 +218,11 @@ class JobQueueRepository:
                             fence_token = fence_token + 1
                         WHERE id = %s AND fence_token = %s AND status = 'processing'
                         """,
-                        (delay_seconds, job_id, fence_token)
+                        (delay_seconds, job_id, fence_token),
                     )
                     await cur.execute("DELETE FROM worker_heartbeats WHERE job_id = %s", (job_id,))
 
-    async def reconcile_stale_jobs(self) -> None:
+    async def reconcile_stale_jobs(self) -> list[dict[str, Any]]:
         pool = db_core.get_pool()
         async with pool.connection() as conn:
             async with conn:
@@ -241,12 +258,16 @@ class JobQueueRepository:
                     await cur.execute(query)
                     rows = await cur.fetchall()
                     if rows:
-                        recovered = [r for r in rows if r['status'] == 'pending']
-                        dead = [r for r in rows if r['status'] == 'dead']
+                        rows = cast(list[dict[str, Any]], rows)
+                        recovered = [r for r in rows if r["status"] == "pending"]
+                        dead = [r for r in rows if r["status"] == "dead"]
                         if recovered:
                             logger.warning("Recovered %d dead worker jobs", len(recovered))
                         if dead:
                             logger.error("Moved %d jobs to dead letter queue", len(dead))
+
+                        # Return the rows so worker can update GitHub
+                        # (But we continue cleanup below)
 
                     await cur.execute("""
                         DELETE FROM worker_heartbeats h
@@ -262,5 +283,8 @@ class JobQueueRepository:
                         WHERE status = 'pending'
                         AND created_at < NOW() - INTERVAL '1 hour'
                     """)
+
+                    return cast(list[dict[str, Any]], rows) if rows else []
+
 
 queue_repo = JobQueueRepository()

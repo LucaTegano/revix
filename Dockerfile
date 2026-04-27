@@ -28,9 +28,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 
 # Use a non-root user for security
-RUN groupadd -r lucai && useradd -r -g lucai lucai
-RUN chown -R lucai:lucai /app
-USER lucai
+RUN groupadd -r revix && useradd -r -g revix revix
+RUN chown -R revix:revix /app
+USER revix
 
 EXPOSE 8000
 

@@ -25,7 +25,7 @@ LiteLLM allows us to use a single tool-definition format.
 
 ## Cost Efficiency Example
 - **Traditional Method:** Sending a 200k token diff to Claude 3.5 Sonnet once -> **~$3.00**.
-- **LucAI Map-Reduce:**
+- **Revix Map-Reduce:**
     - Map (20 chunks x Gemini Flash) -> **~$0.02**.
     - Reduce (Summaries x Claude Sonnet) -> **~$0.15**.
     - **Total: ~$0.17 (94% Savings)**.

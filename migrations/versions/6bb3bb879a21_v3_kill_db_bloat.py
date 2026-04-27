@@ -5,6 +5,7 @@ Revises: acbf6e17a2fe
 Create Date: 2026-04-26 15:00:00.000000
 
 """
+
 from collections.abc import Sequence
 
 from alembic import op
@@ -29,6 +30,7 @@ def upgrade() -> None:
 
     # 2. Add Index for partitioning cleanup
     op.create_index("idx_jobs_created_date", "jobs", ["created_date"])
+
 
 def downgrade() -> None:
     op.drop_index("idx_jobs_created_date", table_name="jobs")

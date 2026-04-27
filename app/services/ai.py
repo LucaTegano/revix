@@ -20,19 +20,22 @@ tracer = trace.get_tracer(__name__)
 
 # --- Tree-sitter Setup ---
 LANGUAGES = {
-    '.py': Language(tspython.language()),
-    '.js': Language(tsjavascript.language()),
-    '.ts': Language(tsjavascript.language()),
-    '.go': Language(tsgo.language()),
+    ".py": Language(tspython.language()),
+    ".js": Language(tsjavascript.language()),
+    ".ts": Language(tsjavascript.language()),
+    ".go": Language(tsgo.language()),
 }
 
 BOUNDARY_TYPES = {
-    '.py': {'class_definition', 'function_definition', 'decorated_definition'},
-    '.js': {
-        'class_declaration', 'function_declaration', 'arrow_function',
-        'method_definition', 'export_statement'
+    ".py": {"class_definition", "function_definition", "decorated_definition"},
+    ".js": {
+        "class_declaration",
+        "function_declaration",
+        "arrow_function",
+        "method_definition",
+        "export_statement",
     },
-    '.go': {'function_declaration', 'method_declaration', 'type_declaration'},
+    ".go": {"function_declaration", "method_declaration", "type_declaration"},
 }
 
 
@@ -65,12 +68,12 @@ class RepoIndexer:
         return Parser(lang)
 
     def index_file(self, file_path: str, source: str) -> tuple[list[Symbol], list[Reference]]:
-        ext = '.' + file_path.rsplit('.', 1)[-1] if '.' in file_path else ''
+        ext = "." + file_path.rsplit(".", 1)[-1] if "." in file_path else ""
         parser = self.get_parser(ext)
         if not parser:
             return [], []
 
-        source_bytes = source.encode('utf-8')
+        source_bytes = source.encode("utf-8")
         tree = parser.parse(source_bytes)
 
         symbols: list[Symbol] = []
@@ -82,45 +85,71 @@ class RepoIndexer:
         return symbols, references
 
     def _extract_definitions(
-        self, node: Any, source_bytes: bytes, file_path: str, symbols: list[Symbol], ext: str, parent_name: str | None = None
+        self,
+        node: Any,
+        source_bytes: bytes,
+        file_path: str,
+        symbols: list[Symbol],
+        ext: str,
+        parent_name: str | None = None,
     ) -> None:
         boundary_types = BOUNDARY_TYPES.get(ext, set())
         if node.type in boundary_types:
             name = ""
             for child in node.children:
-                if child.type in ('identifier', 'name'):
-                    name = source_bytes[child.start_byte:child.end_byte].decode('utf-8')
+                if child.type in ("identifier", "name"):
+                    name = source_bytes[child.start_byte : child.end_byte].decode("utf-8")
                     break
             if name:
-                sig = source_bytes[node.start_byte:node.end_byte].decode('utf-8').split('\n')[0].strip()
-                symbols.append(Symbol(
-                    name=name,
-                    qualified_name=f"{parent_name}.{name}" if parent_name else name,
-                    kind=node.type,
-                    file_path=file_path,
-                    start_line=node.start_point[0],
-                    end_line=node.end_point[0],
-                    signature=sig,
-                    parent=parent_name
-                ))
-                if node.type in ('class_definition', 'class_declaration'):
+                sig = (
+                    source_bytes[node.start_byte : node.end_byte]
+                    .decode("utf-8")
+                    .split("\n")[0]
+                    .strip()
+                )
+                symbols.append(
+                    Symbol(
+                        name=name,
+                        qualified_name=f"{parent_name}.{name}" if parent_name else name,
+                        kind=node.type,
+                        file_path=file_path,
+                        start_line=node.start_point[0],
+                        end_line=node.end_point[0],
+                        signature=sig,
+                        parent=parent_name,
+                    )
+                )
+                if node.type in ("class_definition", "class_declaration"):
                     for child in node.children:
-                        self._extract_definitions(child, source_bytes, file_path, symbols, ext, parent_name=name)
+                        self._extract_definitions(
+                            child, source_bytes, file_path, symbols, ext, parent_name=name
+                        )
                     return
         for child in node.children:
             self._extract_definitions(child, source_bytes, file_path, symbols, ext, parent_name)
 
-    def _extract_references(self, node: Any, source_bytes: bytes, file_path: str, references: list[Reference]) -> None:
-        if node.type in ('call', 'call_expression'):
-            func_node = node.child_by_field_name('function') or (node.children[0] if node.children else None)
+    def _extract_references(
+        self, node: Any, source_bytes: bytes, file_path: str, references: list[Reference]
+    ) -> None:
+        if node.type in ("call", "call_expression"):
+            func_node = node.child_by_field_name("function") or (
+                node.children[0] if node.children else None
+            )
             if func_node:
-                func_text = source_bytes[func_node.start_byte:func_node.end_byte].decode('utf-8', errors='replace')
-                name = func_text.split('.')[-1].split('(')[0].strip()
+                func_text = source_bytes[func_node.start_byte : func_node.end_byte].decode(
+                    "utf-8", errors="replace"
+                )
+                name = func_text.split(".")[-1].split("(")[0].strip()
                 if name:
-                    references.append(Reference(
-                        symbol_name=name, file_path=file_path, line=node.start_point[0],
-                        context_line="", ref_type='call'
-                    ))
+                    references.append(
+                        Reference(
+                            symbol_name=name,
+                            file_path=file_path,
+                            line=node.start_point[0],
+                            context_line="",
+                            ref_type="call",
+                        )
+                    )
         for child in node.children:
             self._extract_references(child, source_bytes, file_path, references)
 
@@ -165,10 +194,13 @@ class AIService:
         }
         if model.startswith("openrouter/"):
             kwargs["api_base"] = "https://openrouter.ai/api/v1"
-            kwargs["extra_headers"] = {"HTTP-Referer": "https://github.com/LucaTegano/lucai", "X-Title": "LucAI"}
+            kwargs["extra_headers"] = {
+                "HTTP-Referer": "https://github.com/LucaTegano/revix",
+                "X-Title": "Revix",
+            }
         elif settings.AI_API_BASE:
             kwargs["api_base"] = settings.AI_API_BASE
-        
+
         if settings.active_api_key:
             kwargs["api_key"] = settings.active_api_key
         if settings.AI_FALLBACK_MODELS:
@@ -177,15 +209,15 @@ class AIService:
 
     def _chunk_by_ast(self, file_path: str, source: str) -> list[str]:
         """Splits file into logically bound chunks using tree-sitter. Attempts sub-node split for huge classes."""
-        ext = '.' + file_path.rsplit('.', 1)[-1] if '.' in file_path else ''
+        ext = "." + file_path.rsplit(".", 1)[-1] if "." in file_path else ""
         parser = self.indexer.get_parser(ext)
         if not parser:
             return [f"FILE: {file_path}\n{source}"]
 
-        source_bytes = source.encode('utf-8')
+        source_bytes = source.encode("utf-8")
         tree = parser.parse(source_bytes)
         boundary_types = BOUNDARY_TYPES.get(ext, set())
-        
+
         chunks = []
         current_chunk = [f"FILE: {file_path}"]
         current_tokens = 0
@@ -194,26 +226,35 @@ class AIService:
             return len(text) // 4
 
         for node in tree.root_node.children:
-            node_text = source_bytes[node.start_byte:node.end_byte].decode('utf-8', errors='replace')
+            node_text = source_bytes[node.start_byte : node.end_byte].decode(
+                "utf-8", errors="replace"
+            )
             node_tokens = estimate_tokens(node_text)
 
             if node.type in boundary_types:
                 if node_tokens > self.MAX_CHUNK_TOKENS:
                     # Case 1: Monolithic node. Try to split by children (e.g. methods in a class)
                     sub_nodes_found = False
-                    if node.type in ('class_definition', 'class_declaration'):
+                    if node.type in ("class_definition", "class_declaration"):
                         # Look for methods in the body
-                        body = node.child_by_field_name('body')
+                        body = node.child_by_field_name("body")
                         if body:
                             for sub in body.children:
                                 if sub.type in boundary_types:
-                                    chunks.append(f"FILE: {file_path}\n" + source_bytes[sub.start_byte:sub.end_byte].decode('utf-8', errors='replace'))
+                                    chunks.append(
+                                        f"FILE: {file_path}\n"
+                                        + source_bytes[sub.start_byte : sub.end_byte].decode(
+                                            "utf-8", errors="replace"
+                                        )
+                                    )
                                     sub_nodes_found = True
-                    
+
                     if not sub_nodes_found:
                         # Case 2: Monolithic function or leaf that is just too big.
                         # Do NOT textual slice. Flag it.
-                        chunks.append(f"### [SKIP] {file_path} - unit {node.type} too large for review ({node_tokens} tokens)")
+                        chunks.append(
+                            f"### [SKIP] {file_path} - unit {node.type} too large for review ({node_tokens} tokens)"
+                        )
                         logger.warning("Skipping monolithic %s unit in %s", node.type, file_path)
                     continue
 
@@ -228,34 +269,40 @@ class AIService:
                 current_chunk.append(node_text)
                 current_tokens += node_tokens
 
-        if len(current_chunk) > 1: # If more than just the header
+        if len(current_chunk) > 1:  # If more than just the header
             chunks.append("\n".join(current_chunk))
-        
+
         return chunks
 
-    async def analyze_diff(self, diff: str, repo_full_name: str, pr_files: list[dict[str, Any]]) -> ReviewResult:
+    async def analyze_diff(
+        self, diff: str, repo_full_name: str, pr_files: list[dict[str, Any]]
+    ) -> ReviewResult:
         with tracer.start_as_current_span("ai.analyze_diff") as span:
             # 1. Deterministic Context (Call Graph)
             changed_symbols = []
             for f in pr_files:
-                if 'content' in f:
-                    syms, _ = self.indexer.index_file(f['filename'], f['content'])
+                if "content" in f:
+                    syms, _ = self.indexer.index_file(f["filename"], f["content"])
                     changed_symbols.extend([s.name for s in syms])
 
             context_data = []
             if changed_symbols:
-                external_callers = await graph_repo.get_external_callers(repo_full_name, changed_symbols)
+                external_callers = await graph_repo.get_external_callers(
+                    repo_full_name, changed_symbols
+                )
                 for caller in external_callers[:10]:
-                    context_data.append(f"External Call: {caller['file_path']}:{caller['line']} calls '{caller['symbol_name']}'")
+                    context_data.append(
+                        f"External Call: {caller['file_path']}:{caller['line']} calls '{caller['symbol_name']}'"
+                    )
 
             repo_context = "\n".join(context_data)
-            
+
             # 2. AST-Aware Chunking
             # We chunk the whole file content if provided, otherwise we fallback to diff chunks
             all_tasks = []
             for f in pr_files:
-                content = f.get('content') or f.get('patch', '')
-                file_chunks = self._chunk_by_ast(f['filename'], content)
+                content = f.get("content") or f.get("patch", "")
+                file_chunks = self._chunk_by_ast(f["filename"], content)
                 for i, chunk in enumerate(file_chunks):
                     all_tasks.append(self._analyze_chunk(chunk, i, repo_context))
 
@@ -278,48 +325,61 @@ class AIService:
 
             return await self._reduce_summaries(summaries, all_comments)
 
-    async def _analyze_chunk(self, chunk: str, index: int, repo_context: str) -> ReviewResult | None:
+    async def _analyze_chunk(
+        self, chunk: str, index: int, repo_context: str
+    ) -> ReviewResult | None:
         with tracer.start_as_current_span(f"ai.map_chunk_{index}"):
             prompt = "Review this code block.\n"
             if repo_context:
                 prompt += f"\nREPO CONTEXT (EXTERNAL CALLERS):\n{repo_context}\n"
             prompt += f"\nCODE:\n{chunk}"
 
-            tools = [{
-                "type": "function",
-                "function": {
-                    "name": "submit_review",
-                    "description": "Submit code review feedback",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "summary": {"type": "string"},
-                            "score": {"type": "integer", "minimum": 0, "maximum": 100},
-                            "comments": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "path": {"type": "string"},
-                                        "line": {"type": "integer"},
-                                        "side": {"type": "string", "enum": ["LEFT", "RIGHT"]},
-                                        "body": {"type": "string"},
-                                        "severity": {"type": "string", "enum": ["INFO", "WARNING", "CRITICAL"]}
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "submit_review",
+                        "description": "Submit code review feedback",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "summary": {"type": "string"},
+                                "score": {"type": "integer", "minimum": 0, "maximum": 100},
+                                "comments": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "path": {"type": "string"},
+                                            "line": {"type": "integer"},
+                                            "side": {"type": "string", "enum": ["LEFT", "RIGHT"]},
+                                            "body": {"type": "string"},
+                                            "severity": {
+                                                "type": "string",
+                                                "enum": ["INFO", "WARNING", "CRITICAL"],
+                                            },
+                                        },
+                                        "required": ["path", "line", "body", "side", "severity"],
                                     },
-                                    "required": ["path", "line", "body", "side", "severity"]
-                                }
-                            }
+                                },
+                            },
+                            "required": ["summary", "score", "comments"],
                         },
-                        "required": ["summary", "score", "comments"]
-                    }
+                    },
                 }
-            }]
+            ]
             try:
                 kwargs = self._get_completion_kwargs(settings.AI_MODEL_MAP)
-                kwargs.update({
-                    "messages": [{"role": "system", "content": self.SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-                    "tools": tools, "tool_choice": "required"
-                })
+                kwargs.update(
+                    {
+                        "messages": [
+                            {"role": "system", "content": self.SYSTEM_PROMPT},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "tools": tools,
+                        "tool_choice": "required",
+                    }
+                )
                 response = await acompletion(**kwargs)
                 args = response.choices[0].message.tool_calls[0].function.arguments
                 return ReviewResult.model_validate(json.loads(args))
@@ -327,35 +387,49 @@ class AIService:
                 logger.exception("Map chunk %d failed", index)
                 return None
 
-    async def _reduce_summaries(self, summaries: list[str], comments: list[ReviewComment]) -> ReviewResult:
+    async def _reduce_summaries(
+        self, summaries: list[str], comments: list[ReviewComment]
+    ) -> ReviewResult:
         with tracer.start_as_current_span("ai.reduce_summaries"):
-            tools = [{
-                "type": "function",
-                "function": {
-                    "name": "synthesize_review",
-                    "description": "Synthesize multiple review chunks",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "global_summary": {"type": "string"},
-                            "global_score": {"type": "integer", "minimum": 0, "maximum": 100}
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "synthesize_review",
+                        "description": "Synthesize multiple review chunks",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "global_summary": {"type": "string"},
+                                "global_score": {"type": "integer", "minimum": 0, "maximum": 100},
+                            },
+                            "required": ["global_summary", "global_score"],
                         },
-                        "required": ["global_summary", "global_score"]
-                    }
+                    },
                 }
-            }]
+            ]
             try:
                 kwargs = self._get_completion_kwargs(settings.AI_MODEL_REDUCE)
-                kwargs.update({
-                    "messages": [
-                        {"role": "system", "content": "Synthesize these summaries into one global review."},
-                        {"role": "user", "content": "Summaries:\n" + "\n".join(summaries)}
-                    ],
-                    "tools": tools, "tool_choice": "required"
-                })
+                kwargs.update(
+                    {
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": "Synthesize these summaries into one global review.",
+                            },
+                            {"role": "user", "content": "Summaries:\n" + "\n".join(summaries)},
+                        ],
+                        "tools": tools,
+                        "tool_choice": "required",
+                    }
+                )
                 response = await acompletion(**kwargs)
                 output = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
-                return ReviewResult(summary=output["global_summary"], score=output["global_score"], comments=comments)
+                return ReviewResult(
+                    summary=output["global_summary"],
+                    score=output["global_score"],
+                    comments=comments,
+                )
             except Exception:
                 logger.exception("Reduce phase failed")
                 return ReviewResult(summary="Synthesis failed.", score=0, comments=comments)

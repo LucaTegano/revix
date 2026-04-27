@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 import pytest_asyncio
 from alembic import command
@@ -19,20 +17,25 @@ def postgres_container():
     with PostgresContainer("postgres:18-alpine", driver="psycopg") as postgres:
         yield postgres
 
+
 @pytest.fixture(scope="session")
 def test_db_url(postgres_container):
     """Returns the URL of the test database."""
     url = postgres_container.get_connection_url()
     return url.replace("postgresql+psycopg://", "postgresql://")
 
+
 @pytest_asyncio.fixture(scope="session")
 async def migrate_test_db(test_db_url):
     """Runs Alembic migrations on the test database."""
     alembic_cfg = Config("alembic.ini")
     # Alembic needs synchronous psycopg driver
-    alembic_cfg.set_main_option("sqlalchemy.url", test_db_url.replace("postgresql://", "postgresql+psycopg://"))
+    alembic_cfg.set_main_option(
+        "sqlalchemy.url", test_db_url.replace("postgresql://", "postgresql+psycopg://")
+    )
     command.upgrade(alembic_cfg, "head")
     yield
+
 
 @pytest_asyncio.fixture
 async def override_settings(test_db_url, migrate_test_db):
@@ -40,15 +43,16 @@ async def override_settings(test_db_url, migrate_test_db):
     settings = get_settings()
     original_url = settings.DATABASE_URL
     settings.DATABASE_URL = test_db_url
-    
+
     # Connect directly to ensure DB pool is available before tests
     await db_core.connect()
-    
+
     yield settings
-    
+
     # Disconnect after test
     await db_core.disconnect()
     settings.DATABASE_URL = original_url
+
 
 @pytest_asyncio.fixture
 async def app_client(override_settings):
@@ -56,6 +60,7 @@ async def app_client(override_settings):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+
 
 @pytest_asyncio.fixture
 async def queue_service(override_settings):

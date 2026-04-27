@@ -5,13 +5,14 @@ from pathlib import Path
 from app.services.ai import RepoIndexer
 
 REPOS = [
-    ("lucai",   Path("fixtures/lucai"),   [".py"]),
-    ("django",  Path("fixtures/django"),  [".py"]),
-    ("flask",   Path("fixtures/flask"),   [".py"]),
+    ("revix", Path("fixtures/revix"), [".py"]),
+    ("django", Path("fixtures/django"), [".py"]),
+    ("flask", Path("fixtures/flask"), [".py"]),
     ("fastapi", Path("fixtures/fastapi"), [".py"]),
     ("express", Path("fixtures/express"), [".js"]),
-    ("golang",  Path("fixtures/golang"),  [".go"]),
+    ("golang", Path("fixtures/golang"), [".go"]),
 ]
+
 
 def benchmark_repo(name, path, extensions):
     files = []
@@ -28,16 +29,17 @@ def benchmark_repo(name, path, extensions):
 
     # Sample up to 1000 files to keep benchmark time reasonable
     import random
+
     if len(files) > 1000:
         files = random.sample(files, 1000)
 
     for file_path in files:
         try:
-            source = file_path.read_text(encoding='utf-8', errors='replace')
+            source = file_path.read_text(encoding="utf-8", errors="replace")
             start = time.perf_counter()
             symbols, refs = indexer.index_file(str(file_path), source)
             elapsed_ms = (time.perf_counter() - start) * 1000
-            
+
             latencies.append(elapsed_ms)
             symbol_count += len(symbols)
             ref_count += len(refs)
@@ -58,14 +60,19 @@ def benchmark_repo(name, path, extensions):
         "max_ms": round(max(latencies), 2),
     }
 
+
 if __name__ == "__main__":
-    print(f"{'Repo':<12} {'Files':>6} {'Symbols':>8} {'Refs':>8} "
-          f"{'p50ms':>7} {'p95ms':>7} {'p99ms':>7} {'maxms':>7}")
+    print(
+        f"{'Repo':<12} {'Files':>6} {'Symbols':>8} {'Refs':>8} "
+        f"{'p50ms':>7} {'p95ms':>7} {'p99ms':>7} {'maxms':>7}"
+    )
     print("-" * 75)
-    
+
     for name, path, exts in REPOS:
         r = benchmark_repo(name, path, exts)
         if r:
-            print(f"{r['repo']:<12} {r['files']:>6} {r['total_symbols']:>8} "
-                  f"{r['total_refs']:>8} {r['p50_ms']:>7} {r['p95_ms']:>7} "
-                  f"{r['p99_ms']:>7} {r['max_ms']:>7}")
+            print(
+                f"{r['repo']:<12} {r['files']:>6} {r['total_symbols']:>8} "
+                f"{r['total_refs']:>8} {r['p50_ms']:>7} {r['p95_ms']:>7} "
+                f"{r['p99_ms']:>7} {r['max_ms']:>7}"
+            )

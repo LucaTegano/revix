@@ -1,4 +1,4 @@
-# Walkthrough: Setting up LucAI
+# Walkthrough: Setting up Revix
 
 This guide will take you from a fresh clone to a running, Postgres-native code review system.
 
@@ -8,7 +8,7 @@ This guide will take you from a fresh clone to a running, Postgres-native code r
 - An Anthropic API Key
 
 ## 2. Infrastructure Setup
-LucAI rejects Redis and SQLite. We use PostgreSQL for everything.
+Revix rejects Redis and SQLite. We use PostgreSQL for everything.
 
 ```bash
 # Start the database

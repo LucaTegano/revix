@@ -1,5 +1,5 @@
 [project]
-name = "lucai"
+name = "revix"
 version = "0.1.0"
 description = "AI-powered code review agent"
 authors = [{ name = "Luca", email = "luca2005@gmail.com" }]

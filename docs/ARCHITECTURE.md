@@ -1,10 +1,10 @@
-# LucAI System Architecture: High-Performance Distributed AI Review
+# Revix System Architecture: High-Performance Distributed AI Review
 
-LucAI is a high-reliability, automated code review agent built on a **Postgres-Native** philosophy, optimized for "FAANG-scale" concerns including MVCC bloat, deterministic context analysis, and robust distributed orchestration.
+Revix is a high-reliability, automated code review agent built on a **Postgres-Native** philosophy, optimized for "FAANG-scale" concerns including MVCC bloat, deterministic context analysis, and robust distributed orchestration.
 
 ## 1. Core Philosophy: The Postgres-Native Approach
 
-LucAI leverages PostgreSQL for queue management, state persistence, and distributed locking, entirely replacing legacy Redis-backed queues while addressing common pitfalls of database-backed queues.
+Revix leverages PostgreSQL for queue management, state persistence, and distributed locking, entirely replacing legacy Redis-backed queues while addressing common pitfalls of database-backed queues.
 
 - **Unified State:** The database _is_ the queue. Job state transitions and data updates happen in a single ACID transaction.
 - **Atomic Operations:** Using `FOR UPDATE SKIP LOCKED` for high-concurrency worker polling.
@@ -17,7 +17,7 @@ LucAI leverages PostgreSQL for queue management, state persistence, and distribu
 
 ### 2.1 The Queue & Heartbeat Engine
 
-To solve **MVCC Bloat** (where frequent status/heartbeat updates create dead tuples), LucAI splits the queue into two parts:
+To solve **MVCC Bloat** (where frequent status/heartbeat updates create dead tuples), Revix splits the queue into two parts:
 
 1.  **`jobs` Table:** The system of record. Updates only happen on state transitions (pending -> processing -> done).
 2.  **`worker_heartbeats` Table (UNLOGGED):** Handles frequent (30s) updates. 
@@ -32,7 +32,7 @@ To prevent a "zombie" worker (one that was reclaimed by the reconciliation loop 
 
 ### 2.2 AST-Aware & Precise Token-Based Chunking
 
-Instead of primitive line-based splitting, LucAI uses a hybrid approach combining **Tree-sitter** for logical Abstract Syntax Tree (AST) boundaries and precise token estimation to feed the LLMs.
+Instead of primitive line-based splitting, Revix uses a hybrid approach combining **Tree-sitter** for logical Abstract Syntax Tree (AST) boundaries and precise token estimation to feed the LLMs.
 
 - **Logical Boundaries:** Chunks are split at function, class, or method boundaries.
 - **Token Constraints:** Sub-node splitting ensures blocks fit strictly within the `MAX_CHUNK_TOKENS` (e.g. 28,000 tokens) limit.
@@ -41,7 +41,7 @@ Instead of primitive line-based splitting, LucAI uses a hybrid approach combinin
 
 ### 2.3 Deterministic Call Graph Analysis & Anti-Hallucination Guards
 
-Standard RAG (Vector Search) is often unreliable for code. LucAI uses **deterministic static analysis** to provide repository-wide context.
+Standard RAG (Vector Search) is often unreliable for code. Revix uses **deterministic static analysis** to provide repository-wide context.
 
 1.  **Incremental Indexing:** On every PR, the worker parses changed files to find defined symbols and their references.
 2.  **Call Graph Traversal:** The system identifies every external file that calls a modified function.
@@ -135,7 +135,7 @@ Benchmarks run on 6 real-world repositories (Sampling up to 1000 files per repo)
 
 | Repo | Files Sampled | Symbols | References | p50 ms/file | p95 ms/file | p99 ms/file |
 |---|---|---|---|---|---|---|
-| **lucai (own)** | 1,000 | 13,483 | 47,178 | 0.37 | 5.37 | 14.81 |
+| **revix (own)** | 1,000 | 13,483 | 47,178 | 0.37 | 5.37 | 14.81 |
 | **django** | 1,000 | 13,206 | 53,204 | 0.16 | 3.70 | 16.23 |
 | **flask** | 83 | 1,624 | 3,969 | 0.38 | 5.14 | 14.55 |
 | **fastapi** | 1,000 | 4,782 | 13,941 | 0.16 | 1.70 | 4.04 |
@@ -151,7 +151,7 @@ Benchmarks run on 6 real-world repositories (Sampling up to 1000 files per repo)
 ### Example Catch: Missing Error Propagation
 **What changed:** `fetch_user_data()` was modified to raise `UserNotFoundError` instead of returning `None`.
 
-**What LucAI found via call graph:**  
+**What Revix found via call graph:**  
 ```
 CRITICAL: api/handlers.py:89 calls fetch_user_data() and checks 
 `if result is None`. This check will never trigger after the 
@@ -159,4 +159,4 @@ signature change. An unhandled UserNotFoundError will now crash
 the handler on missing users.
 ```
 
-**Impact:** A human reviewer missed this because `api/handlers.py` was not part of the PR diff. LucAI's deterministic call graph analysis and precise chunking identified the cross-file dependency and caught the regression before merge.
+**Impact:** A human reviewer missed this because `api/handlers.py` was not part of the PR diff. Revix's deterministic call graph analysis and precise chunking identified the cross-file dependency and caught the regression before merge.

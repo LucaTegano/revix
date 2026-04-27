@@ -8,6 +8,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class DatabaseCore:
     def __init__(self) -> None:
         self.pool: AsyncConnectionPool[Any] | None = None
@@ -20,10 +21,10 @@ class DatabaseCore:
                 conninfo=settings.DATABASE_URL,
                 min_size=settings.DB_POOL_MIN_SIZE,
                 max_size=settings.db_pool_max_size,
-                open=False, # We will open it manually
+                open=False,  # We will open it manually
                 kwargs={
-                    "prepare_threshold": None, # Disable server-side prepared statements if using PgBouncer
-                }
+                    "prepare_threshold": None,  # Disable server-side prepared statements if using PgBouncer
+                },
             )
             await self.pool.open()
             logger.info("Connected to psycopg (v3) Async Pool.")
@@ -49,7 +50,9 @@ class DatabaseCore:
 
                         logger.warning(
                             "⏳ Tables %s not found. (Attempt %d/%d)...",
-                            [t for t in tables if t not in existing_tables], i + 1, retries
+                            [t for t in tables if t not in existing_tables],
+                            i + 1,
+                            retries,
                         )
             except Exception as e:
                 logger.warning("⏳ Database not ready (%s). Waiting...", e)
@@ -67,5 +70,6 @@ class DatabaseCore:
         if not self.pool:
             raise RuntimeError("Database pool not initialized. Call connect() first.")
         return self.pool
+
 
 db_core = DatabaseCore()
