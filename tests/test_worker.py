@@ -30,7 +30,7 @@ async def test_process_job_success(worker: ReviewWorker) -> None:
     mock_github.post_review = AsyncMock()
     mock_github.close = AsyncMock()
 
-    mock_ai_res = ReviewResult(summary="ok", risk_level="LOW", comments=[])
+    mock_ai_res = ReviewResult(summary="ok", score=100, comments=[])
 
     with (
         patch("app.worker.GitHubService", return_value=mock_github),

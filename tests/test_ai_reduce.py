@@ -18,7 +18,7 @@ async def test_reduce_summaries_success(ai_service: AIService) -> None:
 
     mock_tool_call.function.name = "synthesize_review"
     mock_tool_call.function.arguments = (
-        '{"global_summary": "Synthesized summary", "global_risk_level": "HIGH"}'
+        '{"global_summary": "Synthesized summary", "global_score": 85}'
     )
     mock_choice.message.tool_calls = [mock_tool_call]
     mock_response.choices = [mock_choice]
@@ -26,17 +26,17 @@ async def test_reduce_summaries_success(ai_service: AIService) -> None:
     with patch("app.services.ai.acompletion", new_callable=AsyncMock) as mock_acompletion:
         mock_acompletion.return_value = mock_response
 
-        summaries = ["Risk: LOW | Summary: s1", "Risk: HIGH | Summary: s2"]
-        comments = [ReviewComment(path="a.py", line=1, body="b")]
+        summaries = ["Score: 80 | Summary: s1", "Score: 90 | Summary: s2"]
+        comments = [ReviewComment(path="a.py", line=1, body="b", side="RIGHT", severity="INFO")]
 
         result = await ai_service._reduce_summaries(summaries, comments)
 
         assert result.summary == "Synthesized summary"
-        assert result.risk_level == "HIGH"
+        assert result.score == 85
         assert result.comments == comments
 
         # Verify the prompt includes the summaries
         call_kwargs = mock_acompletion.call_args.kwargs
         assert "Synthesize these summaries" in call_kwargs["messages"][0]["content"]
-        assert "Risk: LOW | Summary: s1" in call_kwargs["messages"][1]["content"]
-        assert "Risk: HIGH | Summary: s2" in call_kwargs["messages"][1]["content"]
+        assert "Score: 80 | Summary: s1" in call_kwargs["messages"][1]["content"]
+        assert "Score: 90 | Summary: s2" in call_kwargs["messages"][1]["content"]

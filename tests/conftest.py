@@ -1,3 +1,11 @@
+import os
+
+# Set dummy environment variables for tests BEFORE any app imports
+os.environ.setdefault("GITHUB_APP_ID", "12345")
+os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "dummy")
+os.environ.setdefault("GITHUB_APP_PRIVATE_KEY_B64", "ZHVtbXk=")
+os.environ.setdefault("GEMINI_API_KEY", "dummy")
+
 import pytest
 import pytest_asyncio
 from alembic import command
