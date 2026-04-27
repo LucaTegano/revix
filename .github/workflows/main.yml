@@ -54,9 +54,9 @@ jobs:
         SECRET_KEY: 'test-secret-key'
         DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/revix'
         ANTHROPIC_API_KEY: 'test-anthropic-key'
-        GITHUB_APP_ID: '123'
-        GITHUB_APP_PRIVATE_KEY: 'test-private-key'
-        GITHUB_WEBHOOK_SECRET: 'test-webhook-secret'
+        GITHUB_APP_ID: ${{ secrets.REVIX_APP_ID || '123' }}
+        GITHUB_APP_PRIVATE_KEY_B64: ${{ secrets.REVIX_PRIVATE_KEY_B64 || 'ZHVtbXk=' }}
+        GITHUB_WEBHOOK_SECRET: ${{ secrets.REVIX_WEBHOOK_SECRET || 'test-webhook-secret' }}
         DEBUG: 'True'
       run: |
         uv run pytest
