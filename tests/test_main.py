@@ -77,4 +77,3 @@ def test_webhook_already_exists(mock_queue_repo: MagicMock) -> None:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {"msg": "already exists"}
-

@@ -87,4 +87,3 @@ async def test_analyze_diff_swarm_flow(ai_service: AIService) -> None:
                     mock_route.assert_called_once()
                     mock_exec.assert_called_once()
                     mock_reduce.assert_called_once()
-

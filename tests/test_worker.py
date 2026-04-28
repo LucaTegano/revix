@@ -1,6 +1,5 @@
 import json
 import uuid
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -87,7 +86,7 @@ async def test_process_job_failure(worker: ReviewWorker) -> None:
 async def test_worker_safe_process_job(worker):
     job = {"id": uuid.uuid4()}
     worker._active_jobs[str(job["id"])] = {"fence_token": 1}
-    
+
     with patch.object(worker, "process_job", AsyncMock()) as mock_proc:
         await worker._safe_process_job(job)
         assert str(job["id"]) not in worker._active_jobs
@@ -99,11 +98,11 @@ async def test_worker_shutdown(worker):
     worker.running = True
     job_id = uuid.uuid4()
     worker._active_jobs[str(job_id)] = {"fence_token": 1}
-    
+
     with (
         patch("app.worker.db_core.disconnect", AsyncMock()),
         patch("app.worker.queue_repo.release_job", AsyncMock()) as mock_release,
-        patch("asyncio.gather", AsyncMock())
+        patch("asyncio.gather", AsyncMock()),
     ):
         await worker.shutdown()
         assert mock_release.called
@@ -116,21 +115,21 @@ async def test_reconciliation_loop_full_logic(worker):
         "github_check_run_id": 123,
         "status": "dead",
         "repo_full_name": "owner/repo",
-        "payload": json.dumps({"installation_id": 456})
+        "payload": json.dumps({"installation_id": 456}),
     }
-    
+
     async def mock_sleep(n):
         worker.running = False
-        
+
     mock_gh = MagicMock()
     mock_gh.get_token = AsyncMock(return_value="token")
     mock_gh.update_check_run = AsyncMock()
     mock_gh.close = AsyncMock()
-    
+
     with (
         patch("app.worker.queue_repo.reconcile_stale_jobs", AsyncMock(return_value=[job])),
         patch("app.worker.GitHubService", return_value=mock_gh),
-        patch("asyncio.sleep", mock_sleep)
+        patch("asyncio.sleep", mock_sleep),
     ):
         await worker.reconciliation_loop()
         assert mock_gh.update_check_run.called
@@ -143,19 +142,20 @@ async def test_reconciliation_error_and_missing_id(worker):
         "github_check_run_id": 123,
         "status": "dead",
         "repo_full_name": "owner/repo",
-        "payload": json.dumps({}) 
+        "payload": json.dumps({}),
     }
-    
+
     sleep_calls = 0
+
     async def mock_sleep(n):
         nonlocal sleep_calls
         sleep_calls += 1
         if sleep_calls >= 2:
             worker.running = False
-            
+
     with (
         patch("app.worker.queue_repo.reconcile_stale_jobs") as mock_recon,
-        patch("asyncio.sleep", mock_sleep)
+        patch("asyncio.sleep", mock_sleep),
     ):
         # 1st call: missing ID, 2nd call: Exception
         mock_recon.side_effect = [[job_missing_id], Exception("Boom")]
@@ -166,18 +166,19 @@ async def test_reconciliation_error_and_missing_id(worker):
 @pytest.mark.asyncio
 async def test_run_forever_one_pass(worker):
     worker.running = True
+
     async def mock_acquire():
         worker.running = False
-    
+
     worker._semaphore.acquire = AsyncMock(side_effect=mock_acquire)
     with (
         patch("app.worker.db_core.connect", AsyncMock()),
         patch("app.worker.db_core.wait_for_tables", AsyncMock()),
         patch("app.worker.queue_repo.claim_job", AsyncMock(return_value=None)),
-        patch.object(worker, "reconciliation_loop", AsyncMock())
+        patch.object(worker, "reconciliation_loop", AsyncMock()),
     ):
         await worker.run_forever()
-        assert worker.running == False
+        assert worker.running is False
 
 
 @pytest.mark.asyncio
@@ -190,15 +191,15 @@ async def test_worker_rate_limit_handling(worker):
         "fence_token": 1,
         "payload": json.dumps({"installation_id": 123}),
     }
-    
+
     mock_gh = MagicMock()
     # Mock a 429 error
     error = Exception("429 Too Many Requests")
     mock_gh.get_token = AsyncMock(side_effect=error)
     mock_gh.close = AsyncMock()
-    
+
     mock_release = AsyncMock()
-    
+
     with (
         patch("app.worker.GitHubService", return_value=mock_gh),
         patch("app.worker.queue_repo.release_job", mock_release),
@@ -214,5 +215,3 @@ async def test_worker_run_heartbeat_exit(worker):
     with patch("app.worker.queue_repo.update_heartbeat", AsyncMock(return_value=False)):
         with patch("asyncio.sleep", AsyncMock()):
             await worker._run_heartbeat(uuid.uuid4(), "sha")
-
-
