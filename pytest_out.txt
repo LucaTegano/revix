@@ -1,0 +1,1557 @@
+ Container revix-db-1 Running 
+ Container revix-db-1 Waiting 
+ Container revix-db-1 Healthy 
+ Container revix-web-run-60e3e62b70ef Creating 
+ Container revix-web-run-60e3e62b70ef Created 
+🚀 Running database migrations...
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+🛠️ Running custom command: pytest
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-8.3.5, pluggy-1.6.0
+rootdir: /app
+configfile: pytest.ini
+testpaths: tests
+plugins: anyio-4.13.0, asyncio-0.25.3, cov-6.0.0, mock-3.14.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=session
+collected 55 items
+
+tests/integration/test_webhook_flow.py E                                 [  1%]
+tests/integration/test_worker_queue.py EE                                [  5%]
+tests/test_ai_service.py ...                                             [ 10%]
+tests/test_ast_parsing.py ......                                         [ 21%]
+tests/test_call_graph_recall.py ..                                       [ 25%]
+tests/test_db_core.py .                                                  [ 27%]
+tests/test_db_graph.py .                                                 [ 29%]
+tests/test_db_queue.py ........                                          [ 43%]
+tests/test_github_service.py .......                                     [ 56%]
+tests/test_main.py ....                                                  [ 63%]
+tests/test_otel_propagation.py .                                         [ 65%]
+tests/test_recall.py ..                                                  [ 69%]
+tests/test_swarm_service.py ....                                         [ 76%]
+tests/test_webhook.py .                                                  [ 78%]
+tests/test_webhook_security.py ...                                       [ 83%]
+tests/test_worker.py .........                                           [100%]
+
+==================================== ERRORS ====================================
+__________________ ERROR at setup of test_github_webhook_e2e ___________________
+
+self = <docker.transport.unixconn.UnixHTTPConnectionPool object at 0xffffa2a40d40>
+method = 'GET', url = '/version', body = None
+headers = {'User-Agent': 'docker-sdk-python/7.1.0', 'Accept-Encoding': 'gzip, deflate', 'Accept': '*/*', 'Connection': 'keep-alive'}
+retries = Retry(total=0, connect=None, read=False, redirect=None, status=None)
+redirect = False, assert_same_host = False
+timeout = Timeout(connect=60, read=60, total=None), pool_timeout = None
+release_conn = False, chunked = False, body_pos = None, preload_content = False
+decode_content = False, response_kw = {}
+parsed_url = Url(scheme=None, auth=None, host=None, port=None, path='/version', query=None, fragment=None)
+destination_scheme = None, conn = None, release_this_conn = True
+http_tunnel_required = False, err = None, clean_exit = False
+
+    def urlopen(  # type: ignore[override]
+        self,
+        method: str,
+        url: str,
+        body: _TYPE_BODY | None = None,
+        headers: typing.Mapping[str, str] | None = None,
+        retries: Retry | bool | int | None = None,
+        redirect: bool = True,
+        assert_same_host: bool = True,
+        timeout: _TYPE_TIMEOUT = _DEFAULT_TIMEOUT,
+        pool_timeout: int | None = None,
+        release_conn: bool | None = None,
+        chunked: bool = False,
+        body_pos: _TYPE_BODY_POSITION | None = None,
+        preload_content: bool = True,
+        decode_content: bool = True,
+        **response_kw: typing.Any,
+    ) -> BaseHTTPResponse:
+        """
+        Get a connection from the pool and perform an HTTP request. This is the
+        lowest level call for making a request, so you'll need to specify all
+        the raw details.
+    
+        .. note::
+    
+           More commonly, it's appropriate to use a convenience method
+           such as :meth:`request`.
+    
+        .. note::
+    
+           `release_conn` will only behave as expected if
+           `preload_content=False` because we want to make
+           `preload_content=False` the default behaviour someday soon without
+           breaking backwards compatibility.
+    
+        :param method:
+            HTTP request method (such as GET, POST, PUT, etc.)
+    
+        :param url:
+            The URL to perform the request on.
+    
+        :param body:
+            Data to send in the request body, either :class:`str`, :class:`bytes`,
+            an iterable of :class:`str`/:class:`bytes`, or a file-like object.
+    
+        :param headers:
+            Dictionary of custom headers to send, such as User-Agent,
+            If-None-Match, etc. If None, pool headers are used. If provided,
+            these headers completely replace any pool-specific headers.
+    
+        :param retries:
+            Configure the number of retries to allow before raising a
+            :class:`~urllib3.exceptions.MaxRetryError` exception.
+    
+            If ``None`` (default) will retry 3 times, see ``Retry.DEFAULT``. Pass a
+            :class:`~urllib3.util.retry.Retry` object for fine-grained control
+            over different types of retries.
+            Pass an integer number to retry connection errors that many times,
+            but no other types of errors. Pass zero to never retry.
+    
+            If ``False``, then retries are disabled and any exception is raised
+            immediately. Also, instead of raising a MaxRetryError on redirects,
+            the redirect response will be returned.
+    
+        :type retries: :class:`~urllib3.util.retry.Retry`, False, or an int.
+    
+        :param redirect:
+            If True, automatically handle redirects (status codes 301, 302,
+            303, 307, 308). Each redirect counts as a retry. Disabling retries
+            will disable redirect, too.
+    
+        :param assert_same_host:
+            If ``True``, will make sure that the host of the pool requests is
+            consistent else will raise HostChangedError. When ``False``, you can
+            use the pool on an HTTP proxy and request foreign hosts.
+    
+        :param timeout:
+            If specified, overrides the default timeout for this one
+            request. It may be a float (in seconds) or an instance of
+            :class:`urllib3.util.Timeout`.
+    
+        :param pool_timeout:
+            If set and the pool is set to block=True, then this method will
+            block for ``pool_timeout`` seconds and raise EmptyPoolError if no
+            connection is available within the time period.
+    
+        :param bool preload_content:
+            If True, the response's body will be preloaded into memory.
+    
+        :param bool decode_content:
+            If True, will attempt to decode the body based on the
+            'content-encoding' header.
+    
+        :param release_conn:
+            If False, then the urlopen call will not release the connection
+            back into the pool once a response is received (but will release if
+            you read the entire contents of the response such as when
+            `preload_content=True`). This is useful if you're not preloading
+            the response's content immediately. You will need to call
+            ``r.release_conn()`` on the response ``r`` to return the connection
+            back into the pool. If None, it takes the value of ``preload_content``
+            which defaults to ``True``.
+    
+        :param bool chunked:
+            If True, urllib3 will send the body using chunked transfer
+            encoding. Otherwise, urllib3 will send the body using the standard
+            content-length form. Defaults to False.
+    
+        :param int body_pos:
+            Position to seek to in file-like body in the event of a retry or
+            redirect. Typically this won't need to be set because urllib3 will
+            auto-populate the value when needed.
+        """
+        parsed_url = parse_url(url)
+        destination_scheme = parsed_url.scheme
+    
+        if headers is None:
+            headers = self.headers
+    
+        if not isinstance(retries, Retry):
+            retries = Retry.from_int(retries, redirect=redirect, default=self.retries)
+    
+        if release_conn is None:
+            release_conn = preload_content
+    
+        # Check host
+        if assert_same_host and not self.is_same_host(url):
+            raise HostChangedError(self, url, retries)
+    
+        # Ensure that the URL we're connecting to is properly encoded
+        if url.startswith("/"):
+            url = to_str(_encode_target(url))
+        else:
+            url = to_str(parsed_url.url)
+    
+        conn = None
+    
+        # Track whether `conn` needs to be released before
+        # returning/raising/recursing. Update this variable if necessary, and
+        # leave `release_conn` constant throughout the function. That way, if
+        # the function recurses, the original value of `release_conn` will be
+        # passed down into the recursive call, and its value will be respected.
+        #
+        # See issue #651 [1] for details.
+        #
+        # [1] <https://github.com/urllib3/urllib3/issues/651>
+        release_this_conn = release_conn
+    
+        http_tunnel_required = connection_requires_http_tunnel(
+            self.proxy, self.proxy_config, destination_scheme
+        )
+    
+        # Merge the proxy headers. Only done when not using HTTP CONNECT. We
+        # have to copy the headers dict so we can safely change it without those
+        # changes being reflected in anyone else's copy.
+        if not http_tunnel_required:
+            headers = headers.copy()  # type: ignore[attr-defined]
+            headers.update(self.proxy_headers)  # type: ignore[union-attr]
+    
+        # Must keep the exception bound to a separate variable or else Python 3
+        # complains about UnboundLocalError.
+        err = None
+    
+        # Keep track of whether we cleanly exited the except block. This
+        # ensures we do proper cleanup in finally.
+        clean_exit = False
+    
+        # Rewind body position, if needed. Record current position
+        # for future rewinds in the event of a redirect/retry.
+        body_pos = set_file_position(body, body_pos)
+    
+        try:
+            # Request a connection from the queue.
+            timeout_obj = self._get_timeout(timeout)
+            conn = self._get_conn(timeout=pool_timeout)
+    
+            conn.timeout = timeout_obj.connect_timeout  # type: ignore[assignment]
+    
+            # Is this a closed/new connection that requires CONNECT tunnelling?
+            if self.proxy is not None and http_tunnel_required and conn.is_closed:
+                try:
+                    self._prepare_proxy(conn)
+                except (BaseSSLError, OSError, SocketTimeout) as e:
+                    self._raise_timeout(
+                        err=e, url=self.proxy.url, timeout_value=conn.timeout
+                    )
+                    raise
+    
+            # If we're going to release the connection in ``finally:``, then
+            # the response doesn't need to know about the connection. Otherwise
+            # it will also try to release it and we'll have a double-release
+            # mess.
+            response_conn = conn if not release_conn else None
+    
+            # Make the request on the HTTPConnection object
+>           response = self._make_request(
+                conn,
+                method,
+                url,
+                timeout=timeout_obj,
+                body=body,
+                headers=headers,
+                chunked=chunked,
+                retries=retries,
+                response_conn=response_conn,
+                preload_content=preload_content,
+                decode_content=decode_content,
+                **response_kw,
+            )
+
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:787: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:493: in _make_request
+    conn.request(
+.venv/lib/python3.12/site-packages/urllib3/connection.py:500: in request
+    self.endheaders()
+/usr/local/lib/python3.12/http/client.py:1353: in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+/usr/local/lib/python3.12/http/client.py:1113: in _send_output
+    self.send(msg)
+/usr/local/lib/python3.12/http/client.py:1057: in send
+    self.connect()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <UnixHTTPConnection(host='localhost', port=80) at 0xffffa2663950>
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+>       sock.connect(self.unix_socket)
+E       FileNotFoundError: [Errno 2] No such file or directory
+
+.venv/lib/python3.12/site-packages/docker/transport/unixconn.py:26: FileNotFoundError
+
+During handling of the above exception, another exception occurred:
+
+self = <docker.transport.unixconn.UnixHTTPAdapter object at 0xffffa26bdf10>
+request = <PreparedRequest [GET]>, stream = False
+timeout = Timeout(connect=60, read=60, total=None), verify = True, cert = None
+proxies = OrderedDict()
+
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ):
+        """Sends PreparedRequest object. Returns Response object.
+    
+        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.
+        :param stream: (optional) Whether to stream the request content.
+        :param timeout: (optional) How long to wait for the server to send
+            data before giving up, as a float, or a :ref:`(connect timeout,
+            read timeout) <timeouts>` tuple.
+        :type timeout: float or tuple or urllib3 Timeout object
+        :param verify: (optional) Either a boolean, in which case it controls whether
+            we verify the server's TLS certificate, or a string, in which case it
+            must be a path to a CA bundle to use
+        :param cert: (optional) Any user-provided SSL certificate to be trusted.
+        :param proxies: (optional) The proxies dictionary to apply to the request.
+        :rtype: requests.Response
+        """
+    
+        try:
+            conn = self.get_connection_with_tls_context(
+                request, verify, proxies=proxies, cert=cert
+            )
+        except LocationValueError as e:
+            raise InvalidURL(e, request=request)
+    
+        self.cert_verify(conn, request.url, verify, cert)
+        url = self.request_url(request, proxies)
+        self.add_headers(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+    
+        chunked = not (request.body is None or "Content-Length" in request.headers)
+    
+        if isinstance(timeout, tuple):
+            try:
+                connect, read = timeout
+                timeout = TimeoutSauce(connect=connect, read=read)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, "
+                    f"or a single float to set both timeouts to the same value."
+                )
+        elif isinstance(timeout, TimeoutSauce):
+            pass
+        else:
+            timeout = TimeoutSauce(connect=timeout, read=timeout)
+    
+        try:
+>           resp = conn.urlopen(
+                method=request.method,
+                url=url,
+                body=request.body,
+                headers=request.headers,
+                redirect=False,
+                assert_same_host=False,
+                preload_content=False,
+                decode_content=False,
+                retries=self.max_retries,
+                timeout=timeout,
+                chunked=chunked,
+            )
+
+.venv/lib/python3.12/site-packages/requests/adapters.py:645: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:841: in urlopen
+    retries = retries.increment(
+.venv/lib/python3.12/site-packages/urllib3/util/retry.py:490: in increment
+    raise reraise(type(error), error, _stacktrace)
+.venv/lib/python3.12/site-packages/urllib3/util/util.py:38: in reraise
+    raise value.with_traceback(tb)
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:787: in urlopen
+    response = self._make_request(
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:493: in _make_request
+    conn.request(
+.venv/lib/python3.12/site-packages/urllib3/connection.py:500: in request
+    self.endheaders()
+/usr/local/lib/python3.12/http/client.py:1353: in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+/usr/local/lib/python3.12/http/client.py:1113: in _send_output
+    self.send(msg)
+/usr/local/lib/python3.12/http/client.py:1057: in send
+    self.connect()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <UnixHTTPConnection(host='localhost', port=80) at 0xffffa2663950>
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+>       sock.connect(self.unix_socket)
+E       urllib3.exceptions.ProtocolError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/docker/transport/unixconn.py:26: ProtocolError
+
+During handling of the above exception, another exception occurred:
+
+self = <docker.api.client.APIClient object at 0xffffa26bc800>
+
+    def _retrieve_server_version(self):
+        try:
+>           return self.version(api_version=False)["ApiVersion"]
+
+.venv/lib/python3.12/site-packages/docker/api/client.py:223: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/docker/api/daemon.py:181: in version
+    return self._result(self._get(url), json=True)
+.venv/lib/python3.12/site-packages/docker/utils/decorators.py:44: in inner
+    return f(self, *args, **kwargs)
+.venv/lib/python3.12/site-packages/docker/api/client.py:246: in _get
+    return self.get(url, **self._set_request_timeout(kwargs))
+.venv/lib/python3.12/site-packages/requests/sessions.py:605: in get
+    return self.request("GET", url, **kwargs)
+.venv/lib/python3.12/site-packages/requests/sessions.py:592: in request
+    resp = self.send(prep, **send_kwargs)
+.venv/lib/python3.12/site-packages/requests/sessions.py:706: in send
+    r = adapter.send(request, **kwargs)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <docker.transport.unixconn.UnixHTTPAdapter object at 0xffffa26bdf10>
+request = <PreparedRequest [GET]>, stream = False
+timeout = Timeout(connect=60, read=60, total=None), verify = True, cert = None
+proxies = OrderedDict()
+
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ):
+        """Sends PreparedRequest object. Returns Response object.
+    
+        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.
+        :param stream: (optional) Whether to stream the request content.
+        :param timeout: (optional) How long to wait for the server to send
+            data before giving up, as a float, or a :ref:`(connect timeout,
+            read timeout) <timeouts>` tuple.
+        :type timeout: float or tuple or urllib3 Timeout object
+        :param verify: (optional) Either a boolean, in which case it controls whether
+            we verify the server's TLS certificate, or a string, in which case it
+            must be a path to a CA bundle to use
+        :param cert: (optional) Any user-provided SSL certificate to be trusted.
+        :param proxies: (optional) The proxies dictionary to apply to the request.
+        :rtype: requests.Response
+        """
+    
+        try:
+            conn = self.get_connection_with_tls_context(
+                request, verify, proxies=proxies, cert=cert
+            )
+        except LocationValueError as e:
+            raise InvalidURL(e, request=request)
+    
+        self.cert_verify(conn, request.url, verify, cert)
+        url = self.request_url(request, proxies)
+        self.add_headers(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+    
+        chunked = not (request.body is None or "Content-Length" in request.headers)
+    
+        if isinstance(timeout, tuple):
+            try:
+                connect, read = timeout
+                timeout = TimeoutSauce(connect=connect, read=read)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, "
+                    f"or a single float to set both timeouts to the same value."
+                )
+        elif isinstance(timeout, TimeoutSauce):
+            pass
+        else:
+            timeout = TimeoutSauce(connect=timeout, read=timeout)
+    
+        try:
+            resp = conn.urlopen(
+                method=request.method,
+                url=url,
+                body=request.body,
+                headers=request.headers,
+                redirect=False,
+                assert_same_host=False,
+                preload_content=False,
+                decode_content=False,
+                retries=self.max_retries,
+                timeout=timeout,
+                chunked=chunked,
+            )
+    
+        except (ProtocolError, OSError) as err:
+>           raise ConnectionError(err, request=request)
+E           requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/requests/adapters.py:660: ConnectionError
+
+The above exception was the direct cause of the following exception:
+
+>   ???
+
+/Users/luca/Desktop/ALTA/revix/tests/conftest.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/testcontainers/postgres/__init__.py:59: in __init__
+    super().__init__(image=image, **kwargs)
+.venv/lib/python3.12/site-packages/testcontainers/core/container.py:86: in __init__
+    self._docker = DockerClient(**(docker_client_kw or {}))
+.venv/lib/python3.12/site-packages/testcontainers/core/docker_client.py:73: in __init__
+    self.client = docker.from_env(**kwargs)
+.venv/lib/python3.12/site-packages/docker/client.py:94: in from_env
+    return cls(
+.venv/lib/python3.12/site-packages/docker/client.py:45: in __init__
+    self.api = APIClient(*args, **kwargs)
+.venv/lib/python3.12/site-packages/docker/api/client.py:207: in __init__
+    self._version = self._retrieve_server_version()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <docker.api.client.APIClient object at 0xffffa26bc800>
+
+    def _retrieve_server_version(self):
+        try:
+            return self.version(api_version=False)["ApiVersion"]
+        except KeyError as ke:
+            raise DockerException(
+                'Invalid response from docker daemon: key "ApiVersion"'
+                ' is missing.'
+            ) from ke
+        except Exception as e:
+>           raise DockerException(
+                f'Error while fetching server API version: {e}'
+            ) from e
+E           docker.errors.DockerException: Error while fetching server API version: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/docker/api/client.py:230: DockerException
+_______________ ERROR at setup of test_queue_enqueue_idempotency _______________
+
+self = <docker.transport.unixconn.UnixHTTPConnectionPool object at 0xffffa2a40d40>
+method = 'GET', url = '/version', body = None
+headers = {'User-Agent': 'docker-sdk-python/7.1.0', 'Accept-Encoding': 'gzip, deflate', 'Accept': '*/*', 'Connection': 'keep-alive'}
+retries = Retry(total=0, connect=None, read=False, redirect=None, status=None)
+redirect = False, assert_same_host = False
+timeout = Timeout(connect=60, read=60, total=None), pool_timeout = None
+release_conn = False, chunked = False, body_pos = None, preload_content = False
+decode_content = False, response_kw = {}
+parsed_url = Url(scheme=None, auth=None, host=None, port=None, path='/version', query=None, fragment=None)
+destination_scheme = None, conn = None, release_this_conn = True
+http_tunnel_required = False, err = None, clean_exit = False
+
+    def urlopen(  # type: ignore[override]
+        self,
+        method: str,
+        url: str,
+        body: _TYPE_BODY | None = None,
+        headers: typing.Mapping[str, str] | None = None,
+        retries: Retry | bool | int | None = None,
+        redirect: bool = True,
+        assert_same_host: bool = True,
+        timeout: _TYPE_TIMEOUT = _DEFAULT_TIMEOUT,
+        pool_timeout: int | None = None,
+        release_conn: bool | None = None,
+        chunked: bool = False,
+        body_pos: _TYPE_BODY_POSITION | None = None,
+        preload_content: bool = True,
+        decode_content: bool = True,
+        **response_kw: typing.Any,
+    ) -> BaseHTTPResponse:
+        """
+        Get a connection from the pool and perform an HTTP request. This is the
+        lowest level call for making a request, so you'll need to specify all
+        the raw details.
+    
+        .. note::
+    
+           More commonly, it's appropriate to use a convenience method
+           such as :meth:`request`.
+    
+        .. note::
+    
+           `release_conn` will only behave as expected if
+           `preload_content=False` because we want to make
+           `preload_content=False` the default behaviour someday soon without
+           breaking backwards compatibility.
+    
+        :param method:
+            HTTP request method (such as GET, POST, PUT, etc.)
+    
+        :param url:
+            The URL to perform the request on.
+    
+        :param body:
+            Data to send in the request body, either :class:`str`, :class:`bytes`,
+            an iterable of :class:`str`/:class:`bytes`, or a file-like object.
+    
+        :param headers:
+            Dictionary of custom headers to send, such as User-Agent,
+            If-None-Match, etc. If None, pool headers are used. If provided,
+            these headers completely replace any pool-specific headers.
+    
+        :param retries:
+            Configure the number of retries to allow before raising a
+            :class:`~urllib3.exceptions.MaxRetryError` exception.
+    
+            If ``None`` (default) will retry 3 times, see ``Retry.DEFAULT``. Pass a
+            :class:`~urllib3.util.retry.Retry` object for fine-grained control
+            over different types of retries.
+            Pass an integer number to retry connection errors that many times,
+            but no other types of errors. Pass zero to never retry.
+    
+            If ``False``, then retries are disabled and any exception is raised
+            immediately. Also, instead of raising a MaxRetryError on redirects,
+            the redirect response will be returned.
+    
+        :type retries: :class:`~urllib3.util.retry.Retry`, False, or an int.
+    
+        :param redirect:
+            If True, automatically handle redirects (status codes 301, 302,
+            303, 307, 308). Each redirect counts as a retry. Disabling retries
+            will disable redirect, too.
+    
+        :param assert_same_host:
+            If ``True``, will make sure that the host of the pool requests is
+            consistent else will raise HostChangedError. When ``False``, you can
+            use the pool on an HTTP proxy and request foreign hosts.
+    
+        :param timeout:
+            If specified, overrides the default timeout for this one
+            request. It may be a float (in seconds) or an instance of
+            :class:`urllib3.util.Timeout`.
+    
+        :param pool_timeout:
+            If set and the pool is set to block=True, then this method will
+            block for ``pool_timeout`` seconds and raise EmptyPoolError if no
+            connection is available within the time period.
+    
+        :param bool preload_content:
+            If True, the response's body will be preloaded into memory.
+    
+        :param bool decode_content:
+            If True, will attempt to decode the body based on the
+            'content-encoding' header.
+    
+        :param release_conn:
+            If False, then the urlopen call will not release the connection
+            back into the pool once a response is received (but will release if
+            you read the entire contents of the response such as when
+            `preload_content=True`). This is useful if you're not preloading
+            the response's content immediately. You will need to call
+            ``r.release_conn()`` on the response ``r`` to return the connection
+            back into the pool. If None, it takes the value of ``preload_content``
+            which defaults to ``True``.
+    
+        :param bool chunked:
+            If True, urllib3 will send the body using chunked transfer
+            encoding. Otherwise, urllib3 will send the body using the standard
+            content-length form. Defaults to False.
+    
+        :param int body_pos:
+            Position to seek to in file-like body in the event of a retry or
+            redirect. Typically this won't need to be set because urllib3 will
+            auto-populate the value when needed.
+        """
+        parsed_url = parse_url(url)
+        destination_scheme = parsed_url.scheme
+    
+        if headers is None:
+            headers = self.headers
+    
+        if not isinstance(retries, Retry):
+            retries = Retry.from_int(retries, redirect=redirect, default=self.retries)
+    
+        if release_conn is None:
+            release_conn = preload_content
+    
+        # Check host
+        if assert_same_host and not self.is_same_host(url):
+            raise HostChangedError(self, url, retries)
+    
+        # Ensure that the URL we're connecting to is properly encoded
+        if url.startswith("/"):
+            url = to_str(_encode_target(url))
+        else:
+            url = to_str(parsed_url.url)
+    
+        conn = None
+    
+        # Track whether `conn` needs to be released before
+        # returning/raising/recursing. Update this variable if necessary, and
+        # leave `release_conn` constant throughout the function. That way, if
+        # the function recurses, the original value of `release_conn` will be
+        # passed down into the recursive call, and its value will be respected.
+        #
+        # See issue #651 [1] for details.
+        #
+        # [1] <https://github.com/urllib3/urllib3/issues/651>
+        release_this_conn = release_conn
+    
+        http_tunnel_required = connection_requires_http_tunnel(
+            self.proxy, self.proxy_config, destination_scheme
+        )
+    
+        # Merge the proxy headers. Only done when not using HTTP CONNECT. We
+        # have to copy the headers dict so we can safely change it without those
+        # changes being reflected in anyone else's copy.
+        if not http_tunnel_required:
+            headers = headers.copy()  # type: ignore[attr-defined]
+            headers.update(self.proxy_headers)  # type: ignore[union-attr]
+    
+        # Must keep the exception bound to a separate variable or else Python 3
+        # complains about UnboundLocalError.
+        err = None
+    
+        # Keep track of whether we cleanly exited the except block. This
+        # ensures we do proper cleanup in finally.
+        clean_exit = False
+    
+        # Rewind body position, if needed. Record current position
+        # for future rewinds in the event of a redirect/retry.
+        body_pos = set_file_position(body, body_pos)
+    
+        try:
+            # Request a connection from the queue.
+            timeout_obj = self._get_timeout(timeout)
+            conn = self._get_conn(timeout=pool_timeout)
+    
+            conn.timeout = timeout_obj.connect_timeout  # type: ignore[assignment]
+    
+            # Is this a closed/new connection that requires CONNECT tunnelling?
+            if self.proxy is not None and http_tunnel_required and conn.is_closed:
+                try:
+                    self._prepare_proxy(conn)
+                except (BaseSSLError, OSError, SocketTimeout) as e:
+                    self._raise_timeout(
+                        err=e, url=self.proxy.url, timeout_value=conn.timeout
+                    )
+                    raise
+    
+            # If we're going to release the connection in ``finally:``, then
+            # the response doesn't need to know about the connection. Otherwise
+            # it will also try to release it and we'll have a double-release
+            # mess.
+            response_conn = conn if not release_conn else None
+    
+            # Make the request on the HTTPConnection object
+>           response = self._make_request(
+                conn,
+                method,
+                url,
+                timeout=timeout_obj,
+                body=body,
+                headers=headers,
+                chunked=chunked,
+                retries=retries,
+                response_conn=response_conn,
+                preload_content=preload_content,
+                decode_content=decode_content,
+                **response_kw,
+            )
+
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:787: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:493: in _make_request
+    conn.request(
+.venv/lib/python3.12/site-packages/urllib3/connection.py:500: in request
+    self.endheaders()
+/usr/local/lib/python3.12/http/client.py:1353: in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+/usr/local/lib/python3.12/http/client.py:1113: in _send_output
+    self.send(msg)
+/usr/local/lib/python3.12/http/client.py:1057: in send
+    self.connect()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <UnixHTTPConnection(host='localhost', port=80) at 0xffffa2663950>
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+>       sock.connect(self.unix_socket)
+E       FileNotFoundError: [Errno 2] No such file or directory
+
+.venv/lib/python3.12/site-packages/docker/transport/unixconn.py:26: FileNotFoundError
+
+During handling of the above exception, another exception occurred:
+
+self = <docker.transport.unixconn.UnixHTTPAdapter object at 0xffffa26bdf10>
+request = <PreparedRequest [GET]>, stream = False
+timeout = Timeout(connect=60, read=60, total=None), verify = True, cert = None
+proxies = OrderedDict()
+
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ):
+        """Sends PreparedRequest object. Returns Response object.
+    
+        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.
+        :param stream: (optional) Whether to stream the request content.
+        :param timeout: (optional) How long to wait for the server to send
+            data before giving up, as a float, or a :ref:`(connect timeout,
+            read timeout) <timeouts>` tuple.
+        :type timeout: float or tuple or urllib3 Timeout object
+        :param verify: (optional) Either a boolean, in which case it controls whether
+            we verify the server's TLS certificate, or a string, in which case it
+            must be a path to a CA bundle to use
+        :param cert: (optional) Any user-provided SSL certificate to be trusted.
+        :param proxies: (optional) The proxies dictionary to apply to the request.
+        :rtype: requests.Response
+        """
+    
+        try:
+            conn = self.get_connection_with_tls_context(
+                request, verify, proxies=proxies, cert=cert
+            )
+        except LocationValueError as e:
+            raise InvalidURL(e, request=request)
+    
+        self.cert_verify(conn, request.url, verify, cert)
+        url = self.request_url(request, proxies)
+        self.add_headers(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+    
+        chunked = not (request.body is None or "Content-Length" in request.headers)
+    
+        if isinstance(timeout, tuple):
+            try:
+                connect, read = timeout
+                timeout = TimeoutSauce(connect=connect, read=read)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, "
+                    f"or a single float to set both timeouts to the same value."
+                )
+        elif isinstance(timeout, TimeoutSauce):
+            pass
+        else:
+            timeout = TimeoutSauce(connect=timeout, read=timeout)
+    
+        try:
+>           resp = conn.urlopen(
+                method=request.method,
+                url=url,
+                body=request.body,
+                headers=request.headers,
+                redirect=False,
+                assert_same_host=False,
+                preload_content=False,
+                decode_content=False,
+                retries=self.max_retries,
+                timeout=timeout,
+                chunked=chunked,
+            )
+
+.venv/lib/python3.12/site-packages/requests/adapters.py:645: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:841: in urlopen
+    retries = retries.increment(
+.venv/lib/python3.12/site-packages/urllib3/util/retry.py:490: in increment
+    raise reraise(type(error), error, _stacktrace)
+.venv/lib/python3.12/site-packages/urllib3/util/util.py:38: in reraise
+    raise value.with_traceback(tb)
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:787: in urlopen
+    response = self._make_request(
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:493: in _make_request
+    conn.request(
+.venv/lib/python3.12/site-packages/urllib3/connection.py:500: in request
+    self.endheaders()
+/usr/local/lib/python3.12/http/client.py:1353: in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+/usr/local/lib/python3.12/http/client.py:1113: in _send_output
+    self.send(msg)
+/usr/local/lib/python3.12/http/client.py:1057: in send
+    self.connect()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <UnixHTTPConnection(host='localhost', port=80) at 0xffffa2663950>
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+>       sock.connect(self.unix_socket)
+E       urllib3.exceptions.ProtocolError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/docker/transport/unixconn.py:26: ProtocolError
+
+During handling of the above exception, another exception occurred:
+
+self = <docker.api.client.APIClient object at 0xffffa26bc800>
+
+    def _retrieve_server_version(self):
+        try:
+>           return self.version(api_version=False)["ApiVersion"]
+
+.venv/lib/python3.12/site-packages/docker/api/client.py:223: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/docker/api/daemon.py:181: in version
+    return self._result(self._get(url), json=True)
+.venv/lib/python3.12/site-packages/docker/utils/decorators.py:44: in inner
+    return f(self, *args, **kwargs)
+.venv/lib/python3.12/site-packages/docker/api/client.py:246: in _get
+    return self.get(url, **self._set_request_timeout(kwargs))
+.venv/lib/python3.12/site-packages/requests/sessions.py:605: in get
+    return self.request("GET", url, **kwargs)
+.venv/lib/python3.12/site-packages/requests/sessions.py:592: in request
+    resp = self.send(prep, **send_kwargs)
+.venv/lib/python3.12/site-packages/requests/sessions.py:706: in send
+    r = adapter.send(request, **kwargs)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <docker.transport.unixconn.UnixHTTPAdapter object at 0xffffa26bdf10>
+request = <PreparedRequest [GET]>, stream = False
+timeout = Timeout(connect=60, read=60, total=None), verify = True, cert = None
+proxies = OrderedDict()
+
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ):
+        """Sends PreparedRequest object. Returns Response object.
+    
+        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.
+        :param stream: (optional) Whether to stream the request content.
+        :param timeout: (optional) How long to wait for the server to send
+            data before giving up, as a float, or a :ref:`(connect timeout,
+            read timeout) <timeouts>` tuple.
+        :type timeout: float or tuple or urllib3 Timeout object
+        :param verify: (optional) Either a boolean, in which case it controls whether
+            we verify the server's TLS certificate, or a string, in which case it
+            must be a path to a CA bundle to use
+        :param cert: (optional) Any user-provided SSL certificate to be trusted.
+        :param proxies: (optional) The proxies dictionary to apply to the request.
+        :rtype: requests.Response
+        """
+    
+        try:
+            conn = self.get_connection_with_tls_context(
+                request, verify, proxies=proxies, cert=cert
+            )
+        except LocationValueError as e:
+            raise InvalidURL(e, request=request)
+    
+        self.cert_verify(conn, request.url, verify, cert)
+        url = self.request_url(request, proxies)
+        self.add_headers(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+    
+        chunked = not (request.body is None or "Content-Length" in request.headers)
+    
+        if isinstance(timeout, tuple):
+            try:
+                connect, read = timeout
+                timeout = TimeoutSauce(connect=connect, read=read)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, "
+                    f"or a single float to set both timeouts to the same value."
+                )
+        elif isinstance(timeout, TimeoutSauce):
+            pass
+        else:
+            timeout = TimeoutSauce(connect=timeout, read=timeout)
+    
+        try:
+            resp = conn.urlopen(
+                method=request.method,
+                url=url,
+                body=request.body,
+                headers=request.headers,
+                redirect=False,
+                assert_same_host=False,
+                preload_content=False,
+                decode_content=False,
+                retries=self.max_retries,
+                timeout=timeout,
+                chunked=chunked,
+            )
+    
+        except (ProtocolError, OSError) as err:
+>           raise ConnectionError(err, request=request)
+E           requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/requests/adapters.py:660: ConnectionError
+
+The above exception was the direct cause of the following exception:
+
+>   ???
+
+/Users/luca/Desktop/ALTA/revix/tests/conftest.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/testcontainers/postgres/__init__.py:59: in __init__
+    super().__init__(image=image, **kwargs)
+.venv/lib/python3.12/site-packages/testcontainers/core/container.py:86: in __init__
+    self._docker = DockerClient(**(docker_client_kw or {}))
+.venv/lib/python3.12/site-packages/testcontainers/core/docker_client.py:73: in __init__
+    self.client = docker.from_env(**kwargs)
+.venv/lib/python3.12/site-packages/docker/client.py:94: in from_env
+    return cls(
+.venv/lib/python3.12/site-packages/docker/client.py:45: in __init__
+    self.api = APIClient(*args, **kwargs)
+.venv/lib/python3.12/site-packages/docker/api/client.py:207: in __init__
+    self._version = self._retrieve_server_version()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <docker.api.client.APIClient object at 0xffffa26bc800>
+
+    def _retrieve_server_version(self):
+        try:
+            return self.version(api_version=False)["ApiVersion"]
+        except KeyError as ke:
+            raise DockerException(
+                'Invalid response from docker daemon: key "ApiVersion"'
+                ' is missing.'
+            ) from ke
+        except Exception as e:
+>           raise DockerException(
+                f'Error while fetching server API version: {e}'
+            ) from e
+E           docker.errors.DockerException: Error while fetching server API version: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/docker/api/client.py:230: DockerException
+________________ ERROR at setup of test_queue_concurrent_claim _________________
+
+self = <docker.transport.unixconn.UnixHTTPConnectionPool object at 0xffffa2a40d40>
+method = 'GET', url = '/version', body = None
+headers = {'User-Agent': 'docker-sdk-python/7.1.0', 'Accept-Encoding': 'gzip, deflate', 'Accept': '*/*', 'Connection': 'keep-alive'}
+retries = Retry(total=0, connect=None, read=False, redirect=None, status=None)
+redirect = False, assert_same_host = False
+timeout = Timeout(connect=60, read=60, total=None), pool_timeout = None
+release_conn = False, chunked = False, body_pos = None, preload_content = False
+decode_content = False, response_kw = {}
+parsed_url = Url(scheme=None, auth=None, host=None, port=None, path='/version', query=None, fragment=None)
+destination_scheme = None, conn = None, release_this_conn = True
+http_tunnel_required = False, err = None, clean_exit = False
+
+    def urlopen(  # type: ignore[override]
+        self,
+        method: str,
+        url: str,
+        body: _TYPE_BODY | None = None,
+        headers: typing.Mapping[str, str] | None = None,
+        retries: Retry | bool | int | None = None,
+        redirect: bool = True,
+        assert_same_host: bool = True,
+        timeout: _TYPE_TIMEOUT = _DEFAULT_TIMEOUT,
+        pool_timeout: int | None = None,
+        release_conn: bool | None = None,
+        chunked: bool = False,
+        body_pos: _TYPE_BODY_POSITION | None = None,
+        preload_content: bool = True,
+        decode_content: bool = True,
+        **response_kw: typing.Any,
+    ) -> BaseHTTPResponse:
+        """
+        Get a connection from the pool and perform an HTTP request. This is the
+        lowest level call for making a request, so you'll need to specify all
+        the raw details.
+    
+        .. note::
+    
+           More commonly, it's appropriate to use a convenience method
+           such as :meth:`request`.
+    
+        .. note::
+    
+           `release_conn` will only behave as expected if
+           `preload_content=False` because we want to make
+           `preload_content=False` the default behaviour someday soon without
+           breaking backwards compatibility.
+    
+        :param method:
+            HTTP request method (such as GET, POST, PUT, etc.)
+    
+        :param url:
+            The URL to perform the request on.
+    
+        :param body:
+            Data to send in the request body, either :class:`str`, :class:`bytes`,
+            an iterable of :class:`str`/:class:`bytes`, or a file-like object.
+    
+        :param headers:
+            Dictionary of custom headers to send, such as User-Agent,
+            If-None-Match, etc. If None, pool headers are used. If provided,
+            these headers completely replace any pool-specific headers.
+    
+        :param retries:
+            Configure the number of retries to allow before raising a
+            :class:`~urllib3.exceptions.MaxRetryError` exception.
+    
+            If ``None`` (default) will retry 3 times, see ``Retry.DEFAULT``. Pass a
+            :class:`~urllib3.util.retry.Retry` object for fine-grained control
+            over different types of retries.
+            Pass an integer number to retry connection errors that many times,
+            but no other types of errors. Pass zero to never retry.
+    
+            If ``False``, then retries are disabled and any exception is raised
+            immediately. Also, instead of raising a MaxRetryError on redirects,
+            the redirect response will be returned.
+    
+        :type retries: :class:`~urllib3.util.retry.Retry`, False, or an int.
+    
+        :param redirect:
+            If True, automatically handle redirects (status codes 301, 302,
+            303, 307, 308). Each redirect counts as a retry. Disabling retries
+            will disable redirect, too.
+    
+        :param assert_same_host:
+            If ``True``, will make sure that the host of the pool requests is
+            consistent else will raise HostChangedError. When ``False``, you can
+            use the pool on an HTTP proxy and request foreign hosts.
+    
+        :param timeout:
+            If specified, overrides the default timeout for this one
+            request. It may be a float (in seconds) or an instance of
+            :class:`urllib3.util.Timeout`.
+    
+        :param pool_timeout:
+            If set and the pool is set to block=True, then this method will
+            block for ``pool_timeout`` seconds and raise EmptyPoolError if no
+            connection is available within the time period.
+    
+        :param bool preload_content:
+            If True, the response's body will be preloaded into memory.
+    
+        :param bool decode_content:
+            If True, will attempt to decode the body based on the
+            'content-encoding' header.
+    
+        :param release_conn:
+            If False, then the urlopen call will not release the connection
+            back into the pool once a response is received (but will release if
+            you read the entire contents of the response such as when
+            `preload_content=True`). This is useful if you're not preloading
+            the response's content immediately. You will need to call
+            ``r.release_conn()`` on the response ``r`` to return the connection
+            back into the pool. If None, it takes the value of ``preload_content``
+            which defaults to ``True``.
+    
+        :param bool chunked:
+            If True, urllib3 will send the body using chunked transfer
+            encoding. Otherwise, urllib3 will send the body using the standard
+            content-length form. Defaults to False.
+    
+        :param int body_pos:
+            Position to seek to in file-like body in the event of a retry or
+            redirect. Typically this won't need to be set because urllib3 will
+            auto-populate the value when needed.
+        """
+        parsed_url = parse_url(url)
+        destination_scheme = parsed_url.scheme
+    
+        if headers is None:
+            headers = self.headers
+    
+        if not isinstance(retries, Retry):
+            retries = Retry.from_int(retries, redirect=redirect, default=self.retries)
+    
+        if release_conn is None:
+            release_conn = preload_content
+    
+        # Check host
+        if assert_same_host and not self.is_same_host(url):
+            raise HostChangedError(self, url, retries)
+    
+        # Ensure that the URL we're connecting to is properly encoded
+        if url.startswith("/"):
+            url = to_str(_encode_target(url))
+        else:
+            url = to_str(parsed_url.url)
+    
+        conn = None
+    
+        # Track whether `conn` needs to be released before
+        # returning/raising/recursing. Update this variable if necessary, and
+        # leave `release_conn` constant throughout the function. That way, if
+        # the function recurses, the original value of `release_conn` will be
+        # passed down into the recursive call, and its value will be respected.
+        #
+        # See issue #651 [1] for details.
+        #
+        # [1] <https://github.com/urllib3/urllib3/issues/651>
+        release_this_conn = release_conn
+    
+        http_tunnel_required = connection_requires_http_tunnel(
+            self.proxy, self.proxy_config, destination_scheme
+        )
+    
+        # Merge the proxy headers. Only done when not using HTTP CONNECT. We
+        # have to copy the headers dict so we can safely change it without those
+        # changes being reflected in anyone else's copy.
+        if not http_tunnel_required:
+            headers = headers.copy()  # type: ignore[attr-defined]
+            headers.update(self.proxy_headers)  # type: ignore[union-attr]
+    
+        # Must keep the exception bound to a separate variable or else Python 3
+        # complains about UnboundLocalError.
+        err = None
+    
+        # Keep track of whether we cleanly exited the except block. This
+        # ensures we do proper cleanup in finally.
+        clean_exit = False
+    
+        # Rewind body position, if needed. Record current position
+        # for future rewinds in the event of a redirect/retry.
+        body_pos = set_file_position(body, body_pos)
+    
+        try:
+            # Request a connection from the queue.
+            timeout_obj = self._get_timeout(timeout)
+            conn = self._get_conn(timeout=pool_timeout)
+    
+            conn.timeout = timeout_obj.connect_timeout  # type: ignore[assignment]
+    
+            # Is this a closed/new connection that requires CONNECT tunnelling?
+            if self.proxy is not None and http_tunnel_required and conn.is_closed:
+                try:
+                    self._prepare_proxy(conn)
+                except (BaseSSLError, OSError, SocketTimeout) as e:
+                    self._raise_timeout(
+                        err=e, url=self.proxy.url, timeout_value=conn.timeout
+                    )
+                    raise
+    
+            # If we're going to release the connection in ``finally:``, then
+            # the response doesn't need to know about the connection. Otherwise
+            # it will also try to release it and we'll have a double-release
+            # mess.
+            response_conn = conn if not release_conn else None
+    
+            # Make the request on the HTTPConnection object
+>           response = self._make_request(
+                conn,
+                method,
+                url,
+                timeout=timeout_obj,
+                body=body,
+                headers=headers,
+                chunked=chunked,
+                retries=retries,
+                response_conn=response_conn,
+                preload_content=preload_content,
+                decode_content=decode_content,
+                **response_kw,
+            )
+
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:787: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:493: in _make_request
+    conn.request(
+.venv/lib/python3.12/site-packages/urllib3/connection.py:500: in request
+    self.endheaders()
+/usr/local/lib/python3.12/http/client.py:1353: in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+/usr/local/lib/python3.12/http/client.py:1113: in _send_output
+    self.send(msg)
+/usr/local/lib/python3.12/http/client.py:1057: in send
+    self.connect()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <UnixHTTPConnection(host='localhost', port=80) at 0xffffa2663950>
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+>       sock.connect(self.unix_socket)
+E       FileNotFoundError: [Errno 2] No such file or directory
+
+.venv/lib/python3.12/site-packages/docker/transport/unixconn.py:26: FileNotFoundError
+
+During handling of the above exception, another exception occurred:
+
+self = <docker.transport.unixconn.UnixHTTPAdapter object at 0xffffa26bdf10>
+request = <PreparedRequest [GET]>, stream = False
+timeout = Timeout(connect=60, read=60, total=None), verify = True, cert = None
+proxies = OrderedDict()
+
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ):
+        """Sends PreparedRequest object. Returns Response object.
+    
+        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.
+        :param stream: (optional) Whether to stream the request content.
+        :param timeout: (optional) How long to wait for the server to send
+            data before giving up, as a float, or a :ref:`(connect timeout,
+            read timeout) <timeouts>` tuple.
+        :type timeout: float or tuple or urllib3 Timeout object
+        :param verify: (optional) Either a boolean, in which case it controls whether
+            we verify the server's TLS certificate, or a string, in which case it
+            must be a path to a CA bundle to use
+        :param cert: (optional) Any user-provided SSL certificate to be trusted.
+        :param proxies: (optional) The proxies dictionary to apply to the request.
+        :rtype: requests.Response
+        """
+    
+        try:
+            conn = self.get_connection_with_tls_context(
+                request, verify, proxies=proxies, cert=cert
+            )
+        except LocationValueError as e:
+            raise InvalidURL(e, request=request)
+    
+        self.cert_verify(conn, request.url, verify, cert)
+        url = self.request_url(request, proxies)
+        self.add_headers(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+    
+        chunked = not (request.body is None or "Content-Length" in request.headers)
+    
+        if isinstance(timeout, tuple):
+            try:
+                connect, read = timeout
+                timeout = TimeoutSauce(connect=connect, read=read)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, "
+                    f"or a single float to set both timeouts to the same value."
+                )
+        elif isinstance(timeout, TimeoutSauce):
+            pass
+        else:
+            timeout = TimeoutSauce(connect=timeout, read=timeout)
+    
+        try:
+>           resp = conn.urlopen(
+                method=request.method,
+                url=url,
+                body=request.body,
+                headers=request.headers,
+                redirect=False,
+                assert_same_host=False,
+                preload_content=False,
+                decode_content=False,
+                retries=self.max_retries,
+                timeout=timeout,
+                chunked=chunked,
+            )
+
+.venv/lib/python3.12/site-packages/requests/adapters.py:645: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:841: in urlopen
+    retries = retries.increment(
+.venv/lib/python3.12/site-packages/urllib3/util/retry.py:490: in increment
+    raise reraise(type(error), error, _stacktrace)
+.venv/lib/python3.12/site-packages/urllib3/util/util.py:38: in reraise
+    raise value.with_traceback(tb)
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:787: in urlopen
+    response = self._make_request(
+.venv/lib/python3.12/site-packages/urllib3/connectionpool.py:493: in _make_request
+    conn.request(
+.venv/lib/python3.12/site-packages/urllib3/connection.py:500: in request
+    self.endheaders()
+/usr/local/lib/python3.12/http/client.py:1353: in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+/usr/local/lib/python3.12/http/client.py:1113: in _send_output
+    self.send(msg)
+/usr/local/lib/python3.12/http/client.py:1057: in send
+    self.connect()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <UnixHTTPConnection(host='localhost', port=80) at 0xffffa2663950>
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+>       sock.connect(self.unix_socket)
+E       urllib3.exceptions.ProtocolError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/docker/transport/unixconn.py:26: ProtocolError
+
+During handling of the above exception, another exception occurred:
+
+self = <docker.api.client.APIClient object at 0xffffa26bc800>
+
+    def _retrieve_server_version(self):
+        try:
+>           return self.version(api_version=False)["ApiVersion"]
+
+.venv/lib/python3.12/site-packages/docker/api/client.py:223: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/docker/api/daemon.py:181: in version
+    return self._result(self._get(url), json=True)
+.venv/lib/python3.12/site-packages/docker/utils/decorators.py:44: in inner
+    return f(self, *args, **kwargs)
+.venv/lib/python3.12/site-packages/docker/api/client.py:246: in _get
+    return self.get(url, **self._set_request_timeout(kwargs))
+.venv/lib/python3.12/site-packages/requests/sessions.py:605: in get
+    return self.request("GET", url, **kwargs)
+.venv/lib/python3.12/site-packages/requests/sessions.py:592: in request
+    resp = self.send(prep, **send_kwargs)
+.venv/lib/python3.12/site-packages/requests/sessions.py:706: in send
+    r = adapter.send(request, **kwargs)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <docker.transport.unixconn.UnixHTTPAdapter object at 0xffffa26bdf10>
+request = <PreparedRequest [GET]>, stream = False
+timeout = Timeout(connect=60, read=60, total=None), verify = True, cert = None
+proxies = OrderedDict()
+
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ):
+        """Sends PreparedRequest object. Returns Response object.
+    
+        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.
+        :param stream: (optional) Whether to stream the request content.
+        :param timeout: (optional) How long to wait for the server to send
+            data before giving up, as a float, or a :ref:`(connect timeout,
+            read timeout) <timeouts>` tuple.
+        :type timeout: float or tuple or urllib3 Timeout object
+        :param verify: (optional) Either a boolean, in which case it controls whether
+            we verify the server's TLS certificate, or a string, in which case it
+            must be a path to a CA bundle to use
+        :param cert: (optional) Any user-provided SSL certificate to be trusted.
+        :param proxies: (optional) The proxies dictionary to apply to the request.
+        :rtype: requests.Response
+        """
+    
+        try:
+            conn = self.get_connection_with_tls_context(
+                request, verify, proxies=proxies, cert=cert
+            )
+        except LocationValueError as e:
+            raise InvalidURL(e, request=request)
+    
+        self.cert_verify(conn, request.url, verify, cert)
+        url = self.request_url(request, proxies)
+        self.add_headers(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+    
+        chunked = not (request.body is None or "Content-Length" in request.headers)
+    
+        if isinstance(timeout, tuple):
+            try:
+                connect, read = timeout
+                timeout = TimeoutSauce(connect=connect, read=read)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, "
+                    f"or a single float to set both timeouts to the same value."
+                )
+        elif isinstance(timeout, TimeoutSauce):
+            pass
+        else:
+            timeout = TimeoutSauce(connect=timeout, read=timeout)
+    
+        try:
+            resp = conn.urlopen(
+                method=request.method,
+                url=url,
+                body=request.body,
+                headers=request.headers,
+                redirect=False,
+                assert_same_host=False,
+                preload_content=False,
+                decode_content=False,
+                retries=self.max_retries,
+                timeout=timeout,
+                chunked=chunked,
+            )
+    
+        except (ProtocolError, OSError) as err:
+>           raise ConnectionError(err, request=request)
+E           requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/requests/adapters.py:660: ConnectionError
+
+The above exception was the direct cause of the following exception:
+
+>   ???
+
+/Users/luca/Desktop/ALTA/revix/tests/conftest.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/testcontainers/postgres/__init__.py:59: in __init__
+    super().__init__(image=image, **kwargs)
+.venv/lib/python3.12/site-packages/testcontainers/core/container.py:86: in __init__
+    self._docker = DockerClient(**(docker_client_kw or {}))
+.venv/lib/python3.12/site-packages/testcontainers/core/docker_client.py:73: in __init__
+    self.client = docker.from_env(**kwargs)
+.venv/lib/python3.12/site-packages/docker/client.py:94: in from_env
+    return cls(
+.venv/lib/python3.12/site-packages/docker/client.py:45: in __init__
+    self.api = APIClient(*args, **kwargs)
+.venv/lib/python3.12/site-packages/docker/api/client.py:207: in __init__
+    self._version = self._retrieve_server_version()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <docker.api.client.APIClient object at 0xffffa26bc800>
+
+    def _retrieve_server_version(self):
+        try:
+            return self.version(api_version=False)["ApiVersion"]
+        except KeyError as ke:
+            raise DockerException(
+                'Invalid response from docker daemon: key "ApiVersion"'
+                ' is missing.'
+            ) from ke
+        except Exception as e:
+>           raise DockerException(
+                f'Error while fetching server API version: {e}'
+            ) from e
+E           docker.errors.DockerException: Error while fetching server API version: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+.venv/lib/python3.12/site-packages/docker/api/client.py:230: DockerException
+=========================== short test summary info ============================
+ERROR tests/integration/test_webhook_flow.py::test_github_webhook_e2e - docke...
+ERROR tests/integration/test_worker_queue.py::test_queue_enqueue_idempotency
+ERROR tests/integration/test_worker_queue.py::test_queue_concurrent_claim - d...
+========================= 52 passed, 3 errors in 2.35s =========================
+--- Logging error ---
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/opentelemetry/sdk/trace/export/__init__.py", line 360, in _export_batch
+    self.span_exporter.export(self.spans_list[:idx])  # type: ignore
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/opentelemetry/sdk/trace/export/__init__.py", line 512, in export
+    self.out.write(self.formatter(span))
+ValueError: I/O operation on closed file.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/logging/__init__.py", line 1163, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/usr/local/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/usr/local/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/usr/local/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/app/.venv/lib/python3.12/site-packages/opentelemetry/sdk/trace/export/__init__.py", line 284, in worker
+    self._drain_queue()
+  File "/app/.venv/lib/python3.12/site-packages/opentelemetry/sdk/trace/export/__init__.py", line 377, in _drain_queue
+    self._export_batch()
+  File "/app/.venv/lib/python3.12/site-packages/opentelemetry/sdk/trace/export/__init__.py", line 362, in _export_batch
+    logger.exception("Exception while exporting Span batch.")
+Message: 'Exception while exporting Span batch.'
+Arguments: ()
+

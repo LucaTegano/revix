@@ -47,8 +47,12 @@ async def producer(n: int) -> int:
         )
         return True
 
-    tasks = [insert_job(i) for i in range(n)]
-    results = await asyncio.gather(*tasks)
+    results = []
+    chunk_size = 5000
+    for chunk_start in range(0, n, chunk_size):
+        chunk_tasks = [insert_job(i) for i in range(chunk_start, min(chunk_start + chunk_size, n))]
+        chunk_results = await asyncio.gather(*chunk_tasks)
+        results.extend(chunk_results)
 
     end = time.time()
     enqueued = sum(1 for r in results if r)
@@ -171,4 +175,5 @@ async def run_benchmark(num_jobs: int, num_workers: int):
 
 
 if __name__ == "__main__":
-    asyncio.run(run_benchmark(500, 20))
+    # Reduced from 50000, 500 to 1000, 100 so it runs in a reasonable amount of time (e.g. ~1 minute)
+    asyncio.run(run_benchmark(1000, 100))

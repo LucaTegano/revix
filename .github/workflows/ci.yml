@@ -1,18 +1,19 @@
 name: CI
-
+ 
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-
+ 
 jobs:
   lint-and-test:
+    name: Lint, Type Check & Test
     runs-on: ubuntu-latest
     
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -24,38 +25,47 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
+ 
     steps:
-    - uses: actions/checkout@v4
-
+    - name: Checkout code
+      uses: actions/checkout@v4
+ 
     - name: Install uv
       uses: astral-sh/setup-uv@v5
       with:
         enable-cache: true
         cache-dependency-path: "uv.lock"
-
+ 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version-file: "pyproject.toml"
-
+ 
     - name: Install dependencies
       run: uv sync --frozen
-
-    - name: Lint with ruff
-      run: uv run ruff check .
-
-    - name: Check formatting with ruff
-      run: uv run ruff format --check .
-
-    - name: Type check with mypy
+ 
+    - name: Static Analysis (Linting)
+      run: |
+        uv run ruff check .
+        uv run ruff format --check .
+ 
+    - name: Static Analysis (Type Checking)
       run: uv run mypy app
-
-    - name: Run tests
+ 
+    - name: Run Tests & Check Coverage
       env:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
         GITHUB_APP_ID: ${{ secrets.REVIX_APP_ID || '123' }}
         GITHUB_APP_PRIVATE_KEY_B64: ${{ secrets.REVIX_PRIVATE_KEY_B64 || 'ZHVtbXk=' }}
         GITHUB_WEBHOOK_SECRET: ${{ secrets.REVIX_WEBHOOK_SECRET || 'test-webhook-secret' }}
-        GEMINI_API_KEY: ${{ secrets.REVIX_GEMINI_API_KEY || 'dummy' }}
-      run: uv run pytest
+        AI_API_KEY: ${{ secrets.REVIX_AI_API_KEY || 'dummy' }}
+      run: |
+        uv run pytest --cov=app --cov-report=xml --cov-fail-under=80
+ 
+    - name: Upload Coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

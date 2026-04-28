@@ -1,20 +1,11 @@
 import base64
 import logging
-from enum import Enum
 from functools import lru_cache
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
-
-
-class AIProvider(str, Enum):
-    GEMINI = "gemini"
-    ANTHROPIC = "anthropic"
-    OPENAI = "openai"
-    OPENROUTER = "openrouter"
-    CUSTOM = "custom"
 
 
 class Settings(BaseSettings):
@@ -27,15 +18,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False  # Secure default
 
     # --- AI Configuration ---
-    AI_PROVIDER: AIProvider = AIProvider.GEMINI
     AI_MODEL_MAP: str = "openrouter/google/gemini-2.0-flash-lite:free"
     AI_MODEL_REDUCE: str = "openrouter/anthropic/claude-3.5-sonnet"
 
     # --- API Keys ---
-    GEMINI_API_KEY: str | None = None
-    ANTHROPIC_API_KEY: str | None = None
-    OPENAI_API_KEY: str | None = None
-    OPENROUTER_API_KEY: str | None = None
     AI_API_KEY: str | None = None
     AI_API_BASE: str | None = None
 
@@ -65,19 +51,9 @@ class Settings(BaseSettings):
         """Ensures all required fields for the active provider are present."""
         errors = []
 
-        # 1. AI Provider Validation
-        required_keys = {
-            AIProvider.GEMINI: self.GEMINI_API_KEY,
-            AIProvider.ANTHROPIC: self.ANTHROPIC_API_KEY,
-            AIProvider.OPENAI: self.OPENAI_API_KEY,
-            AIProvider.OPENROUTER: self.OPENROUTER_API_KEY,
-            AIProvider.CUSTOM: self.AI_API_KEY,
-        }
-
-        if not required_keys.get(self.AI_PROVIDER):
-            errors.append(
-                f"❌ AI_PROVIDER is set to '{self.AI_PROVIDER.value}', but {self.AI_PROVIDER.name}_API_KEY is missing."
-            )
+        # 1. AI API Key Validation
+        if not self.AI_API_KEY:
+            errors.append("❌ AI_API_KEY is missing.")
 
         # 2. GitHub Validation
         if not self.GITHUB_APP_ID:
@@ -117,13 +93,8 @@ class Settings(BaseSettings):
 
     @property
     def active_api_key(self) -> str | None:
-        keys = {
-            AIProvider.GEMINI: self.GEMINI_API_KEY,
-            AIProvider.ANTHROPIC: self.ANTHROPIC_API_KEY,
-            AIProvider.OPENAI: self.OPENAI_API_KEY,
-            AIProvider.OPENROUTER: self.OPENROUTER_API_KEY,
-        }
-        return keys.get(self.AI_PROVIDER) or self.AI_API_KEY
+        """Returns the AI_API_KEY."""
+        return self.AI_API_KEY
 
 
 @lru_cache
@@ -142,6 +113,6 @@ settings = get_settings()
 if __name__ == "__main__":
     # If run directly, validate and print status
     print(f"✅ Configuration Validated for project: {settings.PROJECT_NAME}")
-    print(f"🤖 AI Provider: {settings.AI_PROVIDER.value}")
+    print(f"🤖 Active Model: {settings.AI_MODEL_MAP}")
     print(f"📦 Database: {settings.DATABASE_URL.split('@')[-1]}")  # Hide credentials
     print("🔑 GitHub Key: Base64 key loaded successfully")

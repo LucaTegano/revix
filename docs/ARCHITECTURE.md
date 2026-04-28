@@ -30,26 +30,21 @@ To prevent a "zombie" worker (one that was reclaimed by the reconciliation loop 
 - When a worker finishes, it updates the job ONLY if the `fence_token` matches what it started with.
 - This provides robust atomic reconciliation with exponential backoff on failures.
 
-### 2.2 AST-Aware & Precise Token-Based Chunking
+### 2.3 Multi-Agent Swarm (The Cognitive Engine)
 
-Instead of primitive line-based splitting, Revix uses a hybrid approach combining **Tree-sitter** for logical Abstract Syntax Tree (AST) boundaries and precise token estimation to feed the LLMs.
+Instead of a single monolithic prompt, Revix uses a **Multi-Agent Swarm** architecture to decompose the review task.
 
-- **Logical Boundaries:** Chunks are split at function, class, or method boundaries.
-- **Token Constraints:** Sub-node splitting ensures blocks fit strictly within the `MAX_CHUNK_TOKENS` (e.g. 28,000 tokens) limit.
-- **Structural Integrity:** The LLM always receives structurally complete code blocks, drastically reducing hallucinations caused by sliced logic.
-- **Language Support:** Native support for Python, JavaScript, TypeScript, and Go.
+1.  **The Coordinator (Routing):** Analyzes the overall Pull Request intent (title/body) and dissects the diff using AST. It routes specific code fragments only to the sub-agents that are competent for those changes, eliminating "Context Pollution."
+2.  **Specialized Agents:**
+    - **Review Agent:** Focuses on pure logic, flow control, and edge-cases.
+    - **Security Agent:** Scans for vulnerabilities, injection risks, and insecure network calls.
+    - **Performance Agent:** Analyzes asymptotic complexity and potential memory leaks.
+    - **Planning Agent:** Compares the implementation against the original ticket requirements (Shift-Left).
+    - **Verification Agent (gVisor Sandbox):** Generates and executes test scripts in a hardened `runsc` (gVisor) sandbox to verify code integrity before reporting.
 
-### 2.3 Deterministic Call Graph Analysis & Anti-Hallucination Guards
+### 2.4 AST-Based Precise Extraction
 
-Standard RAG (Vector Search) is often unreliable for code. Revix uses **deterministic static analysis** to provide repository-wide context.
-
-1.  **Incremental Indexing:** On every PR, the worker parses changed files to find defined symbols and their references.
-2.  **Call Graph Traversal:** The system identifies every external file that calls a modified function.
-3.  **Context Injection:** "Who calls this?" data is deterministically injected into the AI prompt. 
-
-**Anti-Hallucination Guards:**
-- The prompt strictly forces the LLM to use exact file paths and line numbers provided in the AST-generated context.
-- Structural chunks naturally prevent the LLM from hallucinating variable states or missing dependencies.
+Revix uses **Tree-sitter** to generate a Concrete Syntax Tree (CST). This allows the agents to navigate the code structurally (e.g., extracting the exact `function_definition` node) rather than relying on brittle regex or line-based slicing. This ensures 100% accurate context extraction for the modified logic boundaries.
 
 ---
 
@@ -80,9 +75,17 @@ graph TD
         GS[Graceful Shutdown]
     end
 
-    subgraph "AI Engine (LiteLLM)"
-        MAP[LiteLLM Router - Map Model]
-        RED[LiteLLM Router - Reduce Model]
+    subgraph "Swarm Cognitive Engine"
+        COORD[Swarm Coordinator - Routing]
+        subgraph "Specialized Agents"
+            RA[Review Agent - Logic]
+            SA[Security Agent - Vulns]
+            PA[Performance Agent - Speed]
+            VA[Verification Agent - Sandbox]
+            LA[Planning Agent - Intent]
+        end
+        SAND[gVisor Sandbox - Docker runsc]
+        SYN[Synthesis - Global Review]
     end
 
     GH -->|Webhook| API
@@ -97,9 +100,12 @@ graph TD
     W1 -->|Index Code| TS
     TS -->|Persist Graph| GR
     
-    W1 -->|Context-Aware Map| MAP
-    MAP -->|Chunk Reviews| RED
-    RED -->|Synthesis| W1
+    W1 -->|Fetch PR Details| GH
+    W1 -->|Delegate| COORD
+    COORD -->|Route Fragments| RA & SA & PA & VA & LA
+    VA -->|Execute Test| SAND
+    RA & SA & PA & VA & LA -->|Defects JSON| SYN
+    SYN -->|Final ReviewResult| W1
     
     W1 -->|Post Comment| GH
     W1 -->|Fence Token Match| JT

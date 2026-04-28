@@ -96,6 +96,14 @@ class GitHubService:
         resp.raise_for_status()
         return str(resp.text)
 
+    async def fetch_pull_request(self, repo: str, pull_number: int, token: str) -> dict[str, Any]:
+        """Fetches pull request details (title, body, etc.)."""
+        resp = await self.client.get(
+            f"/repos/{repo}/pulls/{pull_number}", headers={"Authorization": f"Bearer {token}"}
+        )
+        resp.raise_for_status()
+        return cast(dict[str, Any], resp.json())
+
     async def fetch_pull_files(
         self, repo: str, pull_number: int, token: str
     ) -> list[dict[str, Any]]:

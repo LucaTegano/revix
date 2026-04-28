@@ -170,6 +170,7 @@ class ReviewWorker:
 
                 diff = await github.fetch_diff(repo, pr_num, token)
                 pr_files = await github.fetch_pull_files(repo, pr_num, token)
+                pr_details = await github.fetch_pull_request(repo, pr_num, token)
 
                 # Index for call graph
                 all_symbols, all_refs = [], []
@@ -181,7 +182,12 @@ class ReviewWorker:
                 if all_symbols or all_refs:
                     await graph_repo.persist_repo_graph(repo, all_symbols, all_refs)
 
-                review_result = await self.ai.analyze_diff(diff, repo, pr_files)
+                review_result = await self.ai.analyze_diff(
+                    diff=diff,
+                    repo_full_name=repo,
+                    pr_files=pr_files,
+                    pr_details=pr_details,
+                )
 
                 # Aggregate comments into the main body instead of inline
                 warnings_and_criticals = [

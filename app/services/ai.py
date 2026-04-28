@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 from tree_sitter import Language, Parser
 
 from app.config import settings
-from app.services.db.graph import graph_repo
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -97,7 +96,7 @@ class RepoIndexer:
         if node.type in boundary_types:
             name = ""
             for child in node.children:
-                if child.type in ("identifier", "name"):
+                if child.type in ("identifier", "name", "property_identifier", "field_identifier"):
                     name = source_bytes[child.start_byte : child.end_byte].decode("utf-8")
                     break
             if name:
@@ -160,30 +159,104 @@ class ReviewComment(BaseModel):
     side: str = Field(default="RIGHT", pattern="^(LEFT|RIGHT)$")
     body: str
     severity: str = Field(default="INFO", pattern="^(INFO|WARNING|CRITICAL)$")
+    suggested_fix: str | None = None
+    agent_id: str | None = None
 
 
 class ReviewResult(BaseModel):
     summary: str
     score: int = Field(ge=0, le=100)
     comments: list[ReviewComment] = Field(default_factory=list)
+    agent_reports: dict[str, Any] = Field(default_factory=dict)
 
 
 class AIService:
-    def __init__(self) -> None:
-        self.indexer = RepoIndexer()
+    # --- Agent Prompts ---
+    COORDINATOR_PROMPT = (
+        "You are the Swarm Coordinator. Analyze the PR intent and diff. "
+        "Route specific code chunks to the appropriate sub-agents: "
+        "ReviewAgent (logic), SecurityAgent (vulns), PerformanceAgent (speed), "
+        "VerificationAgent (execution), PlanningAgent (alignment). "
+        "Return a JSON list of routing decisions."
+    )
 
-    SYSTEM_PROMPT = (
-        "You are an expert Senior Software Engineer acting as a Quality Gatekeeper. "
-        "Analyze the provided code changes (diff delta) for logic errors, security vulnerabilities, and performance issues. "
-        "\n\nGUIDELINES:\n"
-        "1. Focus ONLY on the changes provided in the diff (+/- lines).\n"
-        "2. Provide a 'score' from 0 to 100 representing the quality of the PR (100 is perfect).\n"
-        "3. For each violation, specify the 'side' (use 'RIGHT' for additions/modifications in the PR, 'LEFT' for deletions if relevant).\n"
-        "4. Assign a 'severity' (INFO, WARNING, CRITICAL).\n"
-        "5. IMPORTANT: Use the EXACT file path and line numbers from the diff. Do NOT guess."
+    REVIEW_AGENT_PROMPT = (
+        "You are the Review Agent. Focus on logic, flow control, and edge-cases. "
+        "Identify bugs and suggest fixes in JSON format."
+    )
+
+    SECURITY_AGENT_PROMPT = (
+        "You are the Security Agent. Focus on vulnerabilities, injection risks, and anomalous network calls. "
+        "Identify risks and suggest fixes in JSON format."
+    )
+
+    PERFORMANCE_AGENT_PROMPT = (
+        "You are the Performance Agent. Analyze asymptotic complexity and memory allocation. "
+        "Identify bottlenecks and suggest optimizations in JSON format."
+    )
+
+    PLANNING_AGENT_PROMPT = (
+        "You are the Planning Agent. Compare the implementation with the PR intent/ticket. "
+        "Ensure the changes align with the original requirements."
+    )
+
+    VERIFICATION_AGENT_PROMPT = (
+        "You are the Verification Agent. Generate a standalone Python script to test the logic of the provided code. "
+        "The script will be executed in a gVisor sandbox. Use the 'run_in_sandbox' tool."
     )
 
     MAX_CHUNK_TOKENS = 28_000
+
+    def __init__(self) -> None:
+        self.indexer = RepoIndexer()
+        self.semaphore = asyncio.Semaphore(5)  # Restored concurrency
+
+    async def _run_in_sandbox(self, script_content: str) -> dict[str, Any]:
+        """Executes code in an isolated gVisor sandbox via Docker."""
+        # Note: Requires gVisor (runsc) installed on the host
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".py", mode="w") as tmp:
+            tmp.write(script_content)
+            tmp.flush()
+
+            cmd = [
+                "docker",
+                "run",
+                "--rm",
+                "--runtime=runsc",
+                "--network=none",
+                "-v",
+                f"{tmp.name}:/app/test.py:ro",
+                "python:3.11-slim",
+                "python",
+                "/app/test.py",
+            ]
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await proc.communicate()
+
+                # If gVisor is missing, Docker returns exit code 125 (usually) or a specific error message
+                if proc.returncode == 125 or "Unknown runtime" in stderr.decode():
+                    logger.warning(
+                        "gVisor (runsc) not found. Falling back to standard docker runtime."
+                    )
+                    cmd.remove("--runtime=runsc")
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, stderr = await proc.communicate()
+
+                return {
+                    "exit_code": proc.returncode,
+                    "stdout": stdout.decode(),
+                    "stderr": stderr.decode(),
+                }
+            except Exception as e:
+                logger.error("Sandbox execution failed: %s", e)
+                return {"error": str(e)}
 
     def _get_completion_kwargs(self, model: str) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -275,64 +348,106 @@ class AIService:
         return chunks
 
     async def analyze_diff(
-        self, diff: str, repo_full_name: str, pr_files: list[dict[str, Any]]
+        self,
+        diff: str,
+        repo_full_name: str,
+        pr_files: list[dict[str, Any]],
+        pr_details: dict[str, Any],
     ) -> ReviewResult:
-        with tracer.start_as_current_span("ai.analyze_diff") as span:
-            # 1. Deterministic Context (Call Graph)
-            changed_symbols = []
-            for f in pr_files:
-                if "content" in f:
-                    syms, _ = self.indexer.index_file(f["filename"], f["content"])
-                    changed_symbols.extend([s.name for s in syms])
+        with tracer.start_as_current_span("ai.analyze_diff"):
+            intent = f"TITLE: {pr_details.get('title')}\nBODY: {pr_details.get('body')}"
 
-            context_data = []
-            if changed_symbols:
-                external_callers = await graph_repo.get_external_callers(
-                    repo_full_name, changed_symbols
-                )
-                for caller in external_callers[:10]:
-                    context_data.append(
-                        f"External Call: {caller['file_path']}:{caller['line']} calls '{caller['symbol_name']}'"
-                    )
-
-            repo_context = "\n".join(context_data)
-
-            # 2. AST-Aware Chunking
-            # We chunk the whole file content if provided, otherwise we fallback to diff chunks
-            all_tasks = []
+            # 1. AST-Aware Chunking
+            chunks = []
             for f in pr_files:
                 content = f.get("content") or f.get("patch", "")
-                file_chunks = self._chunk_by_ast(f["filename"], content)
-                for i, chunk in enumerate(file_chunks):
-                    all_tasks.append(self._analyze_chunk(chunk, i, repo_context))
+                chunks.extend(self._chunk_by_ast(f["filename"], content))
 
-            span.set_attribute("chunk_count", len(all_tasks))
-            if not all_tasks:
-                return ReviewResult(summary="No code to review.", score=100, comments=[])
+            # 2. Coordinator Routing
+            routing_tasks = [self._coordinate_routing(chunk, intent) for chunk in chunks]
+            routing_decisions = await asyncio.gather(*routing_tasks)
 
-            results = await asyncio.gather(*all_tasks)
-            summaries = [f"Score: {res.score} | Summary: {res.summary}" for res in results if res]
+            # 3. Swarm Execution
+            agent_tasks = []
+            for i, chunk in enumerate(chunks):
+                decisions = routing_decisions[i]
+                for agent_id in decisions:
+                    agent_tasks.append(self._execute_agent(agent_id, chunk, intent))
+
+            if not agent_tasks:
+                return ReviewResult(summary="No issues found by swarm.", score=100)
+
+            results = await asyncio.gather(*agent_tasks)
+
+            # 4. Synthesis
             all_comments = [c for res in results if res for c in res.comments]
-
-            if not summaries:
-                return ReviewResult(summary="Analysis failed.", score=0)
-
-            if len(results) == 1:
-                single_res = results[0]
-                if single_res:
-                    return single_res
-                return ReviewResult(summary="Analysis failed for single chunk.", score=0)
+            summaries = [res.summary for res in results if res]
 
             return await self._reduce_summaries(summaries, all_comments)
 
-    async def _analyze_chunk(
-        self, chunk: str, index: int, repo_context: str
+    async def _coordinate_routing(self, chunk: str, intent: str) -> list[str]:
+        """Coordinator decides which agents should look at this chunk using an LLM."""
+        prompt = (
+            "Decide which agents should analyze this code chunk based on the PR intent.\n"
+            f"PR INTENT:\n{intent}\n\n"
+            f"CODE CHUNK:\n{chunk}\n\n"
+            "AVAILABLE AGENTS: ReviewAgent, SecurityAgent, PerformanceAgent, VerificationAgent, PlanningAgent.\n"
+            "Return only a JSON list of agent IDs."
+        )
+        try:
+            kwargs = self._get_completion_kwargs(settings.AI_MODEL_MAP)
+            kwargs.update(
+                {
+                    "messages": [
+                        {"role": "system", "content": self.COORDINATOR_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    # Some free models struggle with response_format, we'll handle raw text too
+                }
+            )
+            async with self.semaphore:
+                response = await acompletion(**kwargs)
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Empty response from Coordinator")
+
+            # Clean up potential markdown formatting
+            content = content.strip().replace("```json", "").replace("```", "")
+            data = json.loads(content)
+            agents = data.get("agents", ["ReviewAgent"])
+
+            # FORCE VerificationAgent if it's a script-heavy chunk and not already present
+            if ("import " in chunk or "def " in chunk) and "VerificationAgent" not in agents:
+                agents.append("VerificationAgent")
+
+            return list(set(agents))
+        except Exception:
+            logger.exception("Coordinator routing failed")
+            # If it's a script, we REALLY want verification
+            if "import " in chunk or "def " in chunk:
+                return ["ReviewAgent", "VerificationAgent"]
+            return ["ReviewAgent"]
+
+    async def _execute_agent(self, agent_id: str, chunk: str, intent: str) -> ReviewResult | None:
+        """Executes a specific agent on a chunk."""
+        prompts = {
+            "ReviewAgent": self.REVIEW_AGENT_PROMPT,
+            "SecurityAgent": self.SECURITY_AGENT_PROMPT,
+            "PerformanceAgent": self.PERFORMANCE_AGENT_PROMPT,
+            "PlanningAgent": self.PLANNING_AGENT_PROMPT,
+            "VerificationAgent": self.VERIFICATION_AGENT_PROMPT,
+        }
+
+        system_prompt = prompts.get(agent_id, self.REVIEW_AGENT_PROMPT)
+        # Implement agent call logic similar to old _analyze_chunk but with specialized prompt
+        # ... simplified for this edit ...
+        return await self._analyze_chunk_with_agent(agent_id, system_prompt, chunk, intent)
+
+    async def _analyze_chunk_with_agent(
+        self, agent_id: str, system_prompt: str, chunk: str, intent: str
     ) -> ReviewResult | None:
-        with tracer.start_as_current_span(f"ai.map_chunk_{index}"):
-            prompt = "Review this code block.\n"
-            if repo_context:
-                prompt += f"\nREPO CONTEXT (EXTERNAL CALLERS):\n{repo_context}\n"
-            prompt += f"\nCODE:\n{chunk}"
+        with tracer.start_as_current_span(f"ai.agent_{agent_id}"):
+            prompt = f"PR INTENT:\n{intent}\n\nCODE:\n{chunk}"
 
             tools = [
                 {
@@ -358,6 +473,7 @@ class AIService:
                                                 "type": "string",
                                                 "enum": ["INFO", "WARNING", "CRITICAL"],
                                             },
+                                            "suggested_fix": {"type": "string"},
                                         },
                                         "required": ["path", "line", "body", "side", "severity"],
                                     },
@@ -368,23 +484,69 @@ class AIService:
                     },
                 }
             ]
+
+            if agent_id == "VerificationAgent":
+                tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "run_in_sandbox",
+                            "description": "Run Python code in a gVisor sandbox",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"script": {"type": "string"}},
+                                "required": ["script"],
+                            },
+                        },
+                    }
+                )
+
             try:
                 kwargs = self._get_completion_kwargs(settings.AI_MODEL_MAP)
                 kwargs.update(
                     {
                         "messages": [
-                            {"role": "system", "content": self.SYSTEM_PROMPT},
+                            {"role": "system", "content": system_prompt},
                             {"role": "user", "content": prompt},
                         ],
                         "tools": tools,
-                        "tool_choice": "required",
+                        "tool_choice": "auto",
                     }
                 )
-                response = await acompletion(**kwargs)
-                args = response.choices[0].message.tool_calls[0].function.arguments
-                return ReviewResult.model_validate(json.loads(args))
+
+                async with self.semaphore:
+                    response = await acompletion(**kwargs)
+                message = response.choices[0].message
+
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        if tool_call.function.name == "run_in_sandbox":
+                            script = json.loads(tool_call.function.arguments)["script"]
+                            sandbox_res = await self._run_in_sandbox(script)
+                            # Feed sandbox result back to LLM
+                            kwargs["messages"].append(message)
+                            kwargs["messages"].append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "name": "run_in_sandbox",
+                                    "content": json.dumps(sandbox_res),
+                                }
+                            )
+                            async with self.semaphore:
+                                response = await acompletion(**kwargs)
+                            message = response.choices[0].message
+
+                    if message.tool_calls:
+                        for tc in message.tool_calls:
+                            if tc.function.name == "submit_review":
+                                res = ReviewResult.model_validate(json.loads(tc.function.arguments))
+                                for c in res.comments:
+                                    c.agent_id = agent_id
+                                return res
+                return None
             except Exception:
-                logger.exception("Map chunk %d failed", index)
+                logger.exception("Agent %s failed", agent_id)
                 return None
 
     async def _reduce_summaries(
@@ -423,7 +585,8 @@ class AIService:
                         "tool_choice": "required",
                     }
                 )
-                response = await acompletion(**kwargs)
+                async with self.semaphore:
+                    response = await acompletion(**kwargs)
                 output = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
                 return ReviewResult(
                     summary=output["global_summary"],

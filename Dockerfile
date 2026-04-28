@@ -5,21 +5,30 @@ WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-install-project --no-dev
+    uv sync --frozen --no-install-project
 
-# Stage 2: Runtime
+# Stage 2: Test
+FROM builder AS tester
+COPY . .
+# Run tests (this will fail build if tests fail)
+# Note: We don't run them here because we need a running Postgres
+# But we have the environment ready.
+
+# Stage 3: Runtime
 FROM python:3.12-slim-bookworm
 WORKDIR /app
 
-# Install runtime dependencies (like libpq for psycopg if using binary, but uv sync handled it in venv)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --from=docker:26-cli /usr/local/bin/docker /usr/local/bin/docker
+
+# Copy venv WITHOUT dev dependencies for production
 COPY --from=builder /app/.venv /app/.venv
 COPY . .
 
-# Ensure scripts are executable
 RUN chmod +x /app/entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH" \
@@ -27,7 +36,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
 
-# Use a non-root user for security
 RUN groupadd -r revix && useradd -r -g revix revix
 RUN chown -R revix:revix /app
 USER revix
@@ -35,3 +43,4 @@ USER revix
 EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
+

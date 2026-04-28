@@ -7,6 +7,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Fix working directory to project root
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+
 echo -e "${GREEN}🚀 Revix Setup Wizard${NC}"
 echo -e "---------------------"
 
@@ -54,29 +57,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         fi
     }
 
-    echo -e "\n--- AI Provider ---"
-    read -p "AI Provider (gemini/anthropic/openai/openrouter) [openrouter]: " provider
-    provider=${provider:-openrouter}
-    update_env "AI_PROVIDER" "$provider"
-
-    case $provider in
-        openrouter)
-            read -p "OpenRouter API Key: " key
-            update_env "OPENROUTER_API_KEY" "$key"
-            ;;
-        gemini)
-            read -p "Gemini API Key: " key
-            update_env "GEMINI_API_KEY" "$key"
-            ;;
-        anthropic)
-            read -p "Anthropic API Key: " key
-            update_env "ANTHROPIC_API_KEY" "$key"
-            ;;
-        openai)
-            read -p "OpenAI API Key: " key
-            update_env "OPENAI_API_KEY" "$key"
-            ;;
-    esac
+    echo -e "\n--- API Key ---"
+    read -p "Enter your API Key (AI_API_KEY): " key
+    update_env "AI_API_KEY" "$key"
 
     echo -e "\n--- GitHub App ---"
     read -p "GitHub App ID: " app_id
@@ -91,9 +74,26 @@ fi
 
 # 4. Final Validation
 echo -e "\n🧪 Validating configuration..."
-if python3 -m app.config; then
-    echo -e "\n${GREEN}✨ Setup complete! You are ready to go.${NC}"
-    echo -e "👉 Next steps: 'make db' then 'make migrations' then 'make web'"
+
+# Prefer 'uv run' if uv is installed
+if command -v uv &> /dev/null; then
+    echo -e "📦 Using 'uv run' for validation..."
+    if uv run python3 -m app.config; then
+        echo -e "\n${GREEN}✨ Setup complete! You are ready to go.${NC}"
+        echo -e "👉 Next steps: 'make db' then 'make migrations' then 'make web'"
+    else
+        echo -e "\n${RED}❌ Configuration is invalid. Please check your .env file.${NC}"
+        exit 1
+    fi
 else
-    echo -e "\n${RED}❌ Configuration is invalid. Please check your .env file.${NC}"
+    # Fallback to system python but warn the user
+    echo -e "${YELLOW}⚠️  'uv' not found. Falling back to system python (may fail if dependencies are missing).${NC}"
+    if python3 -m app.config; then
+        echo -e "\n${GREEN}✨ Setup complete! You are ready to go.${NC}"
+        echo -e "👉 Next steps: 'make db' then 'make migrations' then 'make web'"
+    else
+        echo -e "\n${RED}❌ Configuration is invalid. Please check your .env file.${NC}"
+        echo -e "${YELLOW}💡 Tip: Try running 'make install' first to install dependencies.${NC}"
+        exit 1
+    fi
 fi

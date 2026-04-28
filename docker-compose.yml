@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:18-alpine
+    command: postgres -c max_connections=2000
     environment:
       - POSTGRES_DB=revix
       - POSTGRES_USER=postgres
@@ -29,6 +30,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
 
   worker:
     build:
@@ -42,6 +46,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/revix
       - GITHUB_APP_PRIVATE_KEY_B64=${GITHUB_APP_PRIVATE_KEY_B64}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    user: root
     depends_on:
       db:
         condition: service_healthy

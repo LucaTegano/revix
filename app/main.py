@@ -51,7 +51,7 @@ trace.set_tracer_provider(provider)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
-    logger.info("✅ Configuration validated: %s", settings.AI_PROVIDER)
+    logger.info("✅ Configuration validated for project: %s", settings.PROJECT_NAME)
     await db_core.connect()
     metrics_task = asyncio.create_task(queue_metrics_loop())
 

@@ -16,6 +16,19 @@ def mock_queue_repo() -> Generator[MagicMock, None, None]:
         yield mock
 
 
+def test_health_check() -> None:
+    response = client.get("/health")
+    assert response.status_code == status.HTTP_200_OK
+
+
+def test_app_lifespan() -> None:
+    with patch("app.main.db_core.connect", AsyncMock()):
+        with patch("app.main.db_core.disconnect", AsyncMock()):
+            with TestClient(app) as local_client:
+                response = local_client.get("/health")
+                assert response.status_code == 200
+
+
 def test_webhook_ingestion(mock_queue_repo: MagicMock) -> None:
     # Setup mock
     mock_queue_repo.enqueue_if_new = AsyncMock(return_value=True)
@@ -64,3 +77,4 @@ def test_webhook_already_exists(mock_queue_repo: MagicMock) -> None:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {"msg": "already exists"}
+
