@@ -565,6 +565,25 @@ class AIService:
                                 for c in res.comments:
                                     c.agent_id = agent_id
                                 return res
+                    elif message.content:
+                        import re
+                        content_cleaned = message.content.strip()
+                        md_match = re.search(r'```json\s*(.*?)\s*```', content_cleaned, re.DOTALL)
+                        if md_match:
+                            content_cleaned = md_match.group(1)
+                        else:
+                            content_cleaned = content_cleaned.replace("```", "")
+                            json_match = re.search(r'(\[.*\]|\{.*\})', content_cleaned, re.DOTALL)
+                            if json_match:
+                                content_cleaned = json_match.group(1)
+                        try:
+                            data = json.loads(content_cleaned)
+                            res = ReviewResult.model_validate(data)
+                            for c in res.comments:
+                                c.agent_id = agent_id
+                            return res
+                        except Exception:
+                            logger.warning("Could not parse agent fallback JSON from text: %s", message.content)
                 return None
             except Exception:
                 logger.exception("Agent %s failed", agent_id)
@@ -614,6 +633,43 @@ class AIService:
                     score=output["global_score"],
                     comments=comments,
                 )
-            except Exception:
-                logger.exception("Reduce phase failed")
+            except Exception as e:
+                logger.warning("Structured reduce failed, trying fallback text completion: %s", e)
+                try:
+                    kwargs = self._get_completion_kwargs(settings.AI_MODEL_REDUCE)
+                    prompt = (
+                        "Synthesize these summaries into one global review.\n"
+                        "You must respond with a JSON object containing:\n"
+                        "- 'global_summary': a string summary of the changes\n"
+                        "- 'global_score': an integer score from 0 to 100\n\n"
+                        f"Summaries:\n" + "\n".join(summaries)
+                    )
+                    kwargs.update({
+                        "messages": [
+                            {"role": "system", "content": "You are a review synthesis helper. Output JSON only."},
+                            {"role": "user", "content": prompt}
+                        ]
+                    })
+                    async with self.semaphore:
+                        response = await acompletion(**kwargs)
+                    content = response.choices[0].message.content
+                    if content:
+                        import re
+                        content_cleaned = content.strip()
+                        md_match = re.search(r'```json\s*(.*?)\s*```', content_cleaned, re.DOTALL)
+                        if md_match:
+                            content_cleaned = md_match.group(1)
+                        else:
+                            content_cleaned = content_cleaned.replace("```", "")
+                            json_match = re.search(r'(\[.*\]|\{.*\})', content_cleaned, re.DOTALL)
+                            if json_match:
+                                content_cleaned = json_match.group(1)
+                        data = json.loads(content_cleaned)
+                        return ReviewResult(
+                            summary=data["global_summary"],
+                            score=int(data["global_score"]),
+                            comments=comments,
+                        )
+                except Exception:
+                    logger.exception("Fallback reduce phase failed")
                 return ReviewResult(summary="Synthesis failed.", score=0, comments=comments)
