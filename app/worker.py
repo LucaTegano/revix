@@ -213,11 +213,21 @@ class ReviewWorker:
                         )
                     body += "\n"
 
+                formatted_comments = [
+                    {
+                        "path": c.path,
+                        "line": c.line,
+                        "side": c.side,
+                        "body": f"[{c.severity}] {c.body}" + (f"\n\n**Suggested Fix:**\n```\n{c.suggested_fix}\n```" if c.suggested_fix else ""),
+                    }
+                    for c in review_result.comments
+                ]
+
                 await github.post_review(
                     repo=repo,
                     pull_number=pr_num,
                     commit_id=sha,
-                    comments=[],  # Force single solid comment
+                    comments=formatted_comments,
                     token=token,
                     body=body,
                 )
