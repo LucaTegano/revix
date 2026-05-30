@@ -414,7 +414,12 @@ class AIService:
             # Clean up potential markdown formatting
             content = content.strip().replace("```json", "").replace("```", "")
             data = json.loads(content)
-            agents = data.get("agents", ["ReviewAgent"])
+            if isinstance(data, dict):
+                agents = data.get("agents", ["ReviewAgent"])
+            elif isinstance(data, list):
+                agents = data
+            else:
+                agents = ["ReviewAgent"]
 
             # FORCE VerificationAgent if it's a script-heavy chunk and not already present
             if ("import " in chunk or "def " in chunk) and "VerificationAgent" not in agents:
