@@ -209,7 +209,7 @@ class AIService:
 
     def __init__(self) -> None:
         self.indexer = RepoIndexer()
-        self.semaphore = asyncio.Semaphore(5)  # Restored concurrency
+        self.semaphore = asyncio.Semaphore(2)  # Lowered concurrency to avoid 15 RPM limit
 
     async def _run_in_sandbox(self, script_content: str) -> dict[str, Any]:
         """Executes code in an isolated gVisor sandbox via Docker."""
