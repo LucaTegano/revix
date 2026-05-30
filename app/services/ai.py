@@ -411,9 +411,25 @@ class AIService:
             if not content:
                 raise ValueError("Empty response from Coordinator")
 
-            # Clean up potential markdown formatting
-            content = content.strip().replace("```json", "").replace("```", "")
-            data = json.loads(content)
+            import re
+            content_cleaned = content.strip()
+            # Try to find JSON block in markdown first
+            md_match = re.search(r'```json\s*(.*?)\s*```', content_cleaned, re.DOTALL)
+            if md_match:
+                content_cleaned = md_match.group(1)
+            else:
+                # Remove leading/trailing backticks and then search for brackets
+                content_cleaned = content_cleaned.replace("```", "")
+                json_match = re.search(r'(\[.*\]|\{.*\})', content_cleaned, re.DOTALL)
+                if json_match:
+                    content_cleaned = json_match.group(1)
+
+            try:
+                data = json.loads(content_cleaned)
+            except json.JSONDecodeError:
+                logger.warning("Failed parsing LLM JSON content directly. Raw content: %r", content)
+                raise
+
             if isinstance(data, dict):
                 agents = data.get("agents", ["ReviewAgent"])
             elif isinstance(data, list):
