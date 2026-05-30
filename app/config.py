@@ -84,7 +84,8 @@ class Settings(BaseSettings):
 
     @property
     def db_pool_max_size(self) -> int:
-        return (self.WORKER_CONCURRENCY * 2) + 5
+        calculated_max = (self.WORKER_CONCURRENCY * 2) + 5
+        return max(calculated_max, self.DB_POOL_MIN_SIZE)
 
     @property
     def github_app_private_key(self) -> str:
