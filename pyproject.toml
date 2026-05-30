@@ -67,14 +67,30 @@ module = [
     "tree_sitter_typescript.*",
     "tree_sitter_go.*",
     "pythonjsonlogger.*",
-    "jwt.*"
+    "jwt.*",
+    "testcontainers.*"
 ]
 ignore_missing_imports = true
+
 
 [[tool.mypy.overrides]]
 module = "*.migrations.*"
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+module = [
+    "tests.*",
+    "test_*",
+    "conftest"
+]
+check_untyped_defs = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+

@@ -99,6 +99,7 @@ async def test_analyze_chunk_with_agent_sandbox_flow(ai_service: AIService) -> N
             "VerificationAgent", "system prompt", "chunk", "intent"
         )
 
+        assert result is not None
         assert result.summary == "verified"
         assert mock_sandbox.called
         assert mock_acompletion.call_count == 2

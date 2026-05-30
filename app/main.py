@@ -98,7 +98,7 @@ async def queue_metrics_loop() -> None:
         await asyncio.sleep(15)
 
 
-def verify_signature(body: bytes, signature: str) -> None:
+def verify_signature(body: bytes, signature: str | None) -> None:
     if not signature:
         raise HTTPException(status_code=401, detail="Missing signature")
 
@@ -112,7 +112,9 @@ def verify_signature(body: bytes, signature: str) -> None:
 
 @app.post("/api/webhooks/github")
 async def github_webhook(
-    request: Request, x_github_event: str = Header(...), x_hub_signature_256: str = Header(None)
+    request: Request,
+    x_github_event: str = Header(...),
+    x_hub_signature_256: str | None = Header(None),
 ) -> dict[str, str]:
     start_time = time.time()
     body = await request.body()

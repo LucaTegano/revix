@@ -5,7 +5,7 @@ This guide will take you from a fresh clone to a running, Postgres-native code r
 ## 1. Prerequisites
 - Docker & Docker Compose
 - Python 3.12+
-- An Anthropic API Key
+- An AI Provider API Key (e.g., OpenRouter, OpenAI, or Anthropic)
 
 ## 2. Infrastructure Setup
 Revix rejects Redis and SQLite. We use PostgreSQL for everything.
@@ -23,8 +23,13 @@ cp .env.example .env
 ```
 
 Key variables:
-- `ANTHROPIC_API_KEY`: Required for the Map-Reduce pipeline.
-- `GITHUB_WEBHOOK_SECRET`: Used for HMAC verification.
+- `AI_API_KEY`: Required API key for your AI provider/router (e.g., OpenRouter, OpenAI, Google).
+- `AI_MODEL_MAP`: The model used for coordinator routing and sub-agent analysis (defaults to `openrouter/google/gemini-2.0-flash-lite:free`).
+- `AI_MODEL_REDUCE`: The model used for final review synthesis/reduction (defaults to `openrouter/anthropic/claude-3.5-sonnet`).
+- `GITHUB_APP_ID`: Your GitHub App ID.
+- `GITHUB_WEBHOOK_SECRET`: Used for webhook signature HMAC verification.
+- `GITHUB_APP_PRIVATE_KEY_B64`: Base64 encoded private key of your GitHub App.
+- `DATABASE_URL`: PostgreSQL connection string.
 
 ## 4. Database Migrations
 We use Alembic for zero-downtime schema management.

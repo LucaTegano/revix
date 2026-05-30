@@ -19,7 +19,7 @@ async def test_worker_trace_propagation(worker: ReviewWorker) -> None:
         trace_id=0xDEADBEEFDEADBEEFDEADBEEFDEADBEEF,
         span_id=0xDEADBEEFDEADBEEF,
         is_remote=True,
-        trace_flags=trace.TraceFlags.SAMPLED,
+        trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
     )
     parent_span = trace.NonRecordingSpan(span_context)
     parent_context = trace.set_span_in_context(parent_span)

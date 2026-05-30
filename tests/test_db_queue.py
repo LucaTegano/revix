@@ -123,12 +123,14 @@ async def test_release_job(queue_repo, mock_db):
 async def test_database_service_shim(db_service, mock_db):
     # Test that the shim correctly uses the global pool
     mock_pool, _, _ = mock_db
-    with patch("app.services.db.db_core.pool", mock_pool):
+    with patch("app.services.db.core.db_core.pool", mock_pool):
         assert db_service.pool == mock_pool
-        db_service.pool = "new_pool"
-        from app.services.db import db_core
+        new_pool = MagicMock()
+        db_service.pool = new_pool
+        from app.services.db.core import db_core
 
-        assert db_core.pool == "new_pool"
+        assert db_core.pool is new_pool
+
 
 
 @pytest.mark.asyncio
