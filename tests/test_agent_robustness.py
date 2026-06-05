@@ -111,7 +111,7 @@ async def test_ai_routing_filters_unknown_agents() -> None:
         mock_acompletion.return_value = response
         agents = await ai_service._coordinate_routing("def f():\n    return 1", "fix")
 
-    assert agents == ["ReviewAgent", "VerificationAgent"]
+    assert agents == ["ReviewAgent"]
 
 
 @pytest.mark.asyncio
@@ -135,3 +135,19 @@ async def test_ai_agent_accepts_direct_json_response() -> None:
     assert result is not None
     assert result.summary == "ok"
     assert result.score == 91
+
+
+def test_ai_review_chunk_budget_prioritizes_risky_files() -> None:
+    ai_service = AIService()
+    pr_files = [
+        {"filename": "docs/readme.md", "patch": "documentation"},
+        {"filename": "src/components/Card.tsx", "patch": "@@ render tweaks"},
+        {"filename": "src/app/api/auth/route.ts", "patch": "@@ token localStorage firebase"},
+        {"filename": "public/logo.svg", "patch": "<svg />"},
+    ]
+
+    with patch("app.services.ai.settings.REVIEW_MAX_CHUNKS", 1):
+        chunks = ai_service._build_review_chunks(pr_files)
+
+    assert len(chunks) == 1
+    assert "src/app/api/auth/route.ts" in chunks[0]

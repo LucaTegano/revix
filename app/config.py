@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     AI_MAX_TOKENS: int = 4000
     AI_TEMPERATURE: float = 0.0
 
+    # --- Review Budget & Noise Controls ---
+    REVIEW_PROFILE: str = "chill"
+    REVIEW_MAX_CHUNKS: int = 12
+    REVIEW_MAX_AGENTS_PER_CHUNK: int = 2
+    REVIEW_MAX_INLINE_COMMENTS: int = 8
+    REVIEW_MIN_INLINE_SEVERITY: str = "WARNING"
+
     # --- GitHub App ---
     GITHUB_APP_ID: int
     GITHUB_WEBHOOK_SECRET: str

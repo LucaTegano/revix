@@ -32,6 +32,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
+SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "CRITICAL": 2}
+
 
 class ReviewWorker:
     def __init__(self, concurrency: int = settings.WORKER_CONCURRENCY) -> None:
@@ -174,6 +176,23 @@ class ReviewWorker:
         status_code = getattr(response, "status_code", None)
         return status_code == 429 or "429" in str(error) or "rate_limit" in str(error).lower()
 
+    def _select_inline_comments(self, comments: list[Any]) -> list[Any]:
+        threshold = SEVERITY_RANK.get(settings.REVIEW_MIN_INLINE_SEVERITY, 1)
+        deduped: list[Any] = []
+        seen: set[tuple[str, int, str]] = set()
+
+        for comment in comments:
+            if SEVERITY_RANK.get(comment.severity, 0) < threshold:
+                continue
+            key = (comment.path, comment.line, comment.body.strip().lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(comment)
+
+        deduped.sort(key=lambda c: (SEVERITY_RANK.get(c.severity, 0), -len(c.body)), reverse=True)
+        return deduped[: settings.REVIEW_MAX_INLINE_COMMENTS]
+
     async def process_job(self, job: dict[str, Any]) -> None:
         job_id: uuid.UUID | None = None
         fence: int | None = None
@@ -252,12 +271,21 @@ class ReviewWorker:
                     f"{review_result.summary}\n\n"
                 )
 
+                inline_comments = self._select_inline_comments(review_result.comments)
+
                 if warnings_and_criticals:
                     body += "### ⚠️ Findings\n\n"
-                    for c in warnings_and_criticals:
+                    for c in warnings_and_criticals[:10]:
                         icon = "🚨" if c.severity == "CRITICAL" else "⚠️"
                         body += (
                             f"- {icon} **{c.severity}** in `{c.path}` (Line {c.line}): {c.body}\n"
+                        )
+                    if len(warnings_and_criticals) > 10:
+                        body += f"- Plus {len(warnings_and_criticals) - 10} additional findings summarized by Revix.\n"
+                    if len(review_result.comments) > len(inline_comments):
+                        body += (
+                            f"\nInline comments limited to the top {len(inline_comments)} "
+                            f"actionable findings by the `{settings.REVIEW_PROFILE}` profile.\n"
                         )
                     body += "\n"
 
@@ -268,7 +296,7 @@ class ReviewWorker:
                         "side": c.side,
                         "body": f"[{c.severity}] {c.body}" + (f"\n\n**Suggested Fix:**\n```\n{c.suggested_fix}\n```" if c.suggested_fix else ""),
                     }
-                    for c in review_result.comments
+                    for c in inline_comments
                 ]
 
                 await github.post_review(

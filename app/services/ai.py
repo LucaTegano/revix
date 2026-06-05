@@ -81,10 +81,27 @@ def normalize_agent_ids(agents: Any, chunk: str) -> list[str]:
     if not normalized:
         normalized = ["ReviewAgent"]
 
-    if ("import " in chunk or "def " in chunk) and "VerificationAgent" not in normalized:
+    should_force_verification = settings.REVIEW_PROFILE != "chill"
+    if should_force_verification and ("import " in chunk or "def " in chunk) and "VerificationAgent" not in normalized:
         normalized.append("VerificationAgent")
 
     return list(dict.fromkeys(normalized))
+
+
+def cap_agent_ids(agents: list[str]) -> list[str]:
+    if len(agents) <= settings.REVIEW_MAX_AGENTS_PER_CHUNK:
+        return agents
+
+    priority = {
+        "SecurityAgent": 0,
+        "ReviewAgent": 1,
+        "PlanningAgent": 2,
+        "PerformanceAgent": 3,
+        "VerificationAgent": 4,
+    }
+    return sorted(agents, key=lambda agent: priority.get(agent, 99))[
+        : settings.REVIEW_MAX_AGENTS_PER_CHUNK
+    ]
 
 
 @dataclass
@@ -231,27 +248,32 @@ class AIService:
 
     REVIEW_AGENT_PROMPT = (
         "You are the Review Agent. Focus on logic, flow control, and edge-cases. "
-        "Identify bugs and suggest fixes in JSON format."
+        "Identify bugs and suggest fixes in JSON format. "
+        "Review profile is chill: report only actionable defects likely to affect correctness, "
+        "security, data integrity, or production behavior. Do not report style nitpicks, vague "
+        "refactors, or duplicate concerns. Keep each finding concise."
     )
 
     SECURITY_AGENT_PROMPT = (
         "You are the Security Agent. Focus on vulnerabilities, injection risks, and anomalous network calls. "
-        "Identify risks and suggest fixes in JSON format."
+        "Identify risks and suggest fixes in JSON format. Report only exploitable or realistic risks."
     )
 
     PERFORMANCE_AGENT_PROMPT = (
         "You are the Performance Agent. Analyze asymptotic complexity and memory allocation. "
-        "Identify bottlenecks and suggest optimizations in JSON format."
+        "Identify bottlenecks and suggest optimizations in JSON format. Only comment when the issue "
+        "is measurable or likely to affect production scale."
     )
 
     PLANNING_AGENT_PROMPT = (
         "You are the Planning Agent. Compare the implementation with the PR intent/ticket. "
-        "Ensure the changes align with the original requirements."
+        "Ensure the changes align with the original requirements. Report only meaningful mismatches."
     )
 
     VERIFICATION_AGENT_PROMPT = (
         "You are the Verification Agent. Generate a standalone Python script to test the logic of the provided code. "
-        "The script will be executed in a gVisor sandbox. Use the 'run_in_sandbox' tool."
+        "The script will be executed in a gVisor sandbox. Use the 'run_in_sandbox' tool only when "
+        "execution can validate a concrete high-risk behavior."
     )
 
     MAX_CHUNK_TOKENS = 28_000
@@ -396,6 +418,75 @@ class AIService:
 
         return chunks
 
+    def _is_reviewable_file(self, file_path: str) -> bool:
+        ignored_suffixes = (
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".svg",
+            ".lock",
+            ".md",
+            ".txt",
+            ".map",
+        )
+        ignored_parts = ("/node_modules/", "/dist/", "/build/", "/coverage/")
+        normalized = f"/{file_path}"
+        return not file_path.endswith(ignored_suffixes) and not any(
+            part in normalized for part in ignored_parts
+        )
+
+    def _file_review_priority(self, pr_file: dict[str, Any]) -> int:
+        filename = str(pr_file.get("filename", ""))
+        patch = str(pr_file.get("patch") or pr_file.get("content") or "")
+        text = f"{filename}\n{patch}".lower()
+
+        score = min(len(patch) // 500, 8)
+        high_risk_terms = (
+            "auth",
+            "token",
+            "secret",
+            "password",
+            "permission",
+            "admin",
+            "payment",
+            "webhook",
+            "localstorage",
+            "firebase",
+            "sql",
+            "database",
+            "api/",
+            "route",
+        )
+        score += sum(4 for term in high_risk_terms if term in text)
+        if filename.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".go")):
+            score += 3
+        return score
+
+    def _build_review_chunks(self, pr_files: list[dict[str, Any]]) -> list[str]:
+        ranked_files = sorted(
+            (f for f in pr_files if self._is_reviewable_file(str(f.get("filename", "")))),
+            key=self._file_review_priority,
+            reverse=True,
+        )
+
+        chunks: list[str] = []
+        max_chunks = max(settings.REVIEW_MAX_CHUNKS, 1)
+        for file_info in ranked_files:
+            content = file_info.get("content") or file_info.get("patch", "")
+            if not content:
+                continue
+            chunks.extend(self._chunk_by_ast(str(file_info["filename"]), str(content)))
+            if len(chunks) >= max_chunks:
+                break
+
+        if len(chunks) > max_chunks:
+            logger.info(
+                "Review chunk budget applied",
+                extra={"selected_chunks": max_chunks, "candidate_chunks": len(chunks)},
+            )
+        return chunks[:max_chunks]
+
     async def analyze_diff(
         self,
         diff: str,
@@ -406,11 +497,8 @@ class AIService:
         with tracer.start_as_current_span("ai.analyze_diff"):
             intent = f"TITLE: {pr_details.get('title')}\nBODY: {pr_details.get('body')}"
 
-            # 1. AST-Aware Chunking
-            chunks = []
-            for f in pr_files:
-                content = f.get("content") or f.get("patch", "")
-                chunks.extend(self._chunk_by_ast(f["filename"], content))
+            # 1. AST-aware chunking with a CodeRabbit-style noise budget.
+            chunks = self._build_review_chunks(pr_files)
 
             # 2. Coordinator Routing
             routing_tasks = [self._coordinate_routing(chunk, intent) for chunk in chunks]
@@ -419,7 +507,7 @@ class AIService:
             # 3. Swarm Execution
             agent_tasks = []
             for i, chunk in enumerate(chunks):
-                decisions = routing_decisions[i]
+                decisions = cap_agent_ids(routing_decisions[i])
                 for agent_id in decisions:
                     agent_tasks.append(self._execute_agent(agent_id, chunk, intent))
 
@@ -438,6 +526,8 @@ class AIService:
         """Coordinator decides which agents should look at this chunk using an LLM."""
         prompt = (
             "Decide which agents should analyze this code chunk based on the PR intent.\n"
+            "Use a chill review profile: choose the fewest agents needed, prefer ReviewAgent "
+            "or SecurityAgent, and avoid VerificationAgent unless execution is clearly valuable.\n"
             f"PR INTENT:\n{intent}\n\n"
             f"CODE CHUNK:\n{chunk}\n\n"
             "AVAILABLE AGENTS: ReviewAgent, SecurityAgent, PerformanceAgent, VerificationAgent, PlanningAgent.\n"
@@ -466,7 +556,7 @@ class AIService:
                 logger.warning("Failed parsing LLM JSON content directly. Raw content: %r", content)
                 raise
 
-            return normalize_agent_ids(data, chunk)
+            return cap_agent_ids(normalize_agent_ids(data, chunk))
         except Exception:
             logger.exception("Coordinator routing failed")
             # If it's a script, we REALLY want verification

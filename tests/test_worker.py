@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.ai import ReviewResult
+from app.services.ai import ReviewComment, ReviewResult
 from app.worker import ReviewWorker
 
 JOB_ID = uuid.UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -218,3 +218,18 @@ async def test_worker_run_heartbeat_exit(worker):
     with patch("app.worker.queue_repo.update_heartbeat", AsyncMock(return_value=False)):
         with patch("asyncio.sleep", AsyncMock()):
             await worker._run_heartbeat(uuid.uuid4(), "sha")
+
+
+def test_worker_selects_top_inline_comments(worker):
+    comments = [
+        ReviewComment(path="a.py", line=1, body="info", severity="INFO"),
+        ReviewComment(path="a.py", line=2, body="warning", severity="WARNING"),
+        ReviewComment(path="a.py", line=3, body="critical", severity="CRITICAL"),
+        ReviewComment(path="a.py", line=3, body="critical", severity="CRITICAL"),
+    ]
+
+    with patch("app.worker.settings.REVIEW_MAX_INLINE_COMMENTS", 1):
+        selected = worker._select_inline_comments(comments)
+
+    assert len(selected) == 1
+    assert selected[0].severity == "CRITICAL"
