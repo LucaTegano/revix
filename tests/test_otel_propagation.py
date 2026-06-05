@@ -29,7 +29,7 @@ async def test_worker_trace_propagation(worker: ReviewWorker) -> None:
 
     # Mock job payload with this carrier
     job = {
-        "id": "job-123",
+        "id": "550e8400-e29b-41d4-a716-446655440000",
         "commit_sha": "sha123",
         "repo_full_name": "owner/repo",
         "pr_number": 1,

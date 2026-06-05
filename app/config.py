@@ -7,6 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
+DEPRECATED_MODEL_ALIASES = {
+    "openrouter/google/gemini-2.0-flash-lite:free": "openrouter/google/gemini-3.1-flash-lite",
+    "openrouter/anthropic/claude-3.5-sonnet": "openrouter/google/gemini-3.1-flash-lite",
+}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -18,8 +23,8 @@ class Settings(BaseSettings):
     DEBUG: bool = False  # Secure default
 
     # --- AI Configuration ---
-    AI_MODEL_MAP: str = "openrouter/google/gemini-2.0-flash-lite:free"
-    AI_MODEL_REDUCE: str = "openrouter/anthropic/claude-3.5-sonnet"
+    AI_MODEL_MAP: str = "openrouter/google/gemini-3.1-flash-lite"
+    AI_MODEL_REDUCE: str = "openrouter/google/gemini-3.1-flash-lite"
 
     # --- API Keys ---
     AI_API_KEY: str | None = None
@@ -50,6 +55,10 @@ class Settings(BaseSettings):
     def validate_setup(self) -> "Settings":
         """Ensures all required fields for the active provider are present."""
         errors = []
+        self.AI_MODEL_MAP = DEPRECATED_MODEL_ALIASES.get(self.AI_MODEL_MAP, self.AI_MODEL_MAP)
+        self.AI_MODEL_REDUCE = DEPRECATED_MODEL_ALIASES.get(
+            self.AI_MODEL_REDUCE, self.AI_MODEL_REDUCE
+        )
 
         # 1. AI API Key Validation
         if not self.AI_API_KEY:

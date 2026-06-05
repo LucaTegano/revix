@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,54 @@ BOUNDARY_TYPES = {
     },
     ".go": {"function_declaration", "method_declaration", "type_declaration"},
 }
+
+VALID_AGENT_IDS = {
+    "ReviewAgent",
+    "SecurityAgent",
+    "PerformanceAgent",
+    "PlanningAgent",
+    "VerificationAgent",
+}
+
+
+def extract_json_payload(content: str) -> Any:
+    content_cleaned = content.strip()
+    md_match = re.search(r"```json\s*(.*?)\s*```", content_cleaned, re.DOTALL)
+    if md_match:
+        content_cleaned = md_match.group(1)
+    else:
+        content_cleaned = content_cleaned.replace("```", "")
+        json_match = re.search(r"(\[.*\]|\{.*\})", content_cleaned, re.DOTALL)
+        if json_match:
+            content_cleaned = json_match.group(1)
+    return json.loads(content_cleaned)
+
+
+def parse_tool_arguments(arguments: Any) -> dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        parsed = json.loads(arguments)
+        if isinstance(parsed, dict):
+            return parsed
+    msg = "Tool arguments must be a JSON object"
+    raise ValueError(msg)
+
+
+def normalize_agent_ids(agents: Any, chunk: str) -> list[str]:
+    if isinstance(agents, dict):
+        agents = agents.get("agents", ["ReviewAgent"])
+    if not isinstance(agents, list):
+        agents = ["ReviewAgent"]
+
+    normalized = [agent for agent in agents if isinstance(agent, str) and agent in VALID_AGENT_IDS]
+    if not normalized:
+        normalized = ["ReviewAgent"]
+
+    if ("import " in chunk or "def " in chunk) and "VerificationAgent" not in normalized:
+        normalized.append("VerificationAgent")
+
+    return list(dict.fromkeys(normalized))
 
 
 @dataclass
@@ -154,8 +203,8 @@ class RepoIndexer:
 
 
 class ReviewComment(BaseModel):
-    path: str
-    line: int
+    path: str = Field(min_length=1)
+    line: int = Field(ge=1)
     side: str = Field(default="RIGHT", pattern="^(LEFT|RIGHT)$")
     body: str
     severity: str = Field(default="INFO", pattern="^(INFO|WARNING|CRITICAL)$")
@@ -411,37 +460,13 @@ class AIService:
             if not content:
                 raise ValueError("Empty response from Coordinator")
 
-            import re
-            content_cleaned = content.strip()
-            # Try to find JSON block in markdown first
-            md_match = re.search(r'```json\s*(.*?)\s*```', content_cleaned, re.DOTALL)
-            if md_match:
-                content_cleaned = md_match.group(1)
-            else:
-                # Remove leading/trailing backticks and then search for brackets
-                content_cleaned = content_cleaned.replace("```", "")
-                json_match = re.search(r'(\[.*\]|\{.*\})', content_cleaned, re.DOTALL)
-                if json_match:
-                    content_cleaned = json_match.group(1)
-
             try:
-                data = json.loads(content_cleaned)
+                data = extract_json_payload(content)
             except json.JSONDecodeError:
                 logger.warning("Failed parsing LLM JSON content directly. Raw content: %r", content)
                 raise
 
-            if isinstance(data, dict):
-                agents = data.get("agents", ["ReviewAgent"])
-            elif isinstance(data, list):
-                agents = data
-            else:
-                agents = ["ReviewAgent"]
-
-            # FORCE VerificationAgent if it's a script-heavy chunk and not already present
-            if ("import " in chunk or "def " in chunk) and "VerificationAgent" not in agents:
-                agents.append("VerificationAgent")
-
-            return list(set(agents))
+            return normalize_agent_ids(data, chunk)
         except Exception:
             logger.exception("Coordinator routing failed")
             # If it's a script, we REALLY want verification
@@ -542,7 +567,7 @@ class AIService:
                 if message.tool_calls:
                     for tool_call in message.tool_calls:
                         if tool_call.function.name == "run_in_sandbox":
-                            script = json.loads(tool_call.function.arguments)["script"]
+                            script = parse_tool_arguments(tool_call.function.arguments)["script"]
                             sandbox_res = await self._run_in_sandbox(script)
                             # Feed sandbox result back to LLM
                             kwargs["messages"].append(message)
@@ -561,29 +586,23 @@ class AIService:
                     if message.tool_calls:
                         for tc in message.tool_calls:
                             if tc.function.name == "submit_review":
-                                res = ReviewResult.model_validate(json.loads(tc.function.arguments))
+                                res = ReviewResult.model_validate(
+                                    parse_tool_arguments(tc.function.arguments)
+                                )
                                 for c in res.comments:
                                     c.agent_id = agent_id
                                 return res
-                    elif message.content:
-                        import re
-                        content_cleaned = message.content.strip()
-                        md_match = re.search(r'```json\s*(.*?)\s*```', content_cleaned, re.DOTALL)
-                        if md_match:
-                            content_cleaned = md_match.group(1)
-                        else:
-                            content_cleaned = content_cleaned.replace("```", "")
-                            json_match = re.search(r'(\[.*\]|\{.*\})', content_cleaned, re.DOTALL)
-                            if json_match:
-                                content_cleaned = json_match.group(1)
-                        try:
-                            data = json.loads(content_cleaned)
-                            res = ReviewResult.model_validate(data)
-                            for c in res.comments:
-                                c.agent_id = agent_id
-                            return res
-                        except Exception:
-                            logger.warning("Could not parse agent fallback JSON from text: %s", message.content)
+                if message.content:
+                    try:
+                        data = extract_json_payload(message.content)
+                        res = ReviewResult.model_validate(data)
+                        for c in res.comments:
+                            c.agent_id = agent_id
+                        return res
+                    except Exception:
+                        logger.warning(
+                            "Could not parse agent fallback JSON from text: %s", message.content
+                        )
                 return None
             except Exception:
                 logger.exception("Agent %s failed", agent_id)
@@ -627,7 +646,9 @@ class AIService:
                 )
                 async with self.semaphore:
                     response = await acompletion(**kwargs)
-                output = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
+                output = parse_tool_arguments(
+                    response.choices[0].message.tool_calls[0].function.arguments
+                )
                 return ReviewResult(
                     summary=output["global_summary"],
                     score=output["global_score"],
@@ -642,7 +663,7 @@ class AIService:
                         "You must respond with a JSON object containing:\n"
                         "- 'global_summary': a string summary of the changes\n"
                         "- 'global_score': an integer score from 0 to 100\n\n"
-                        f"Summaries:\n" + "\n".join(summaries)
+                        "Summaries:\n" + "\n".join(summaries)
                     )
                     kwargs.update({
                         "messages": [
@@ -654,17 +675,7 @@ class AIService:
                         response = await acompletion(**kwargs)
                     content = response.choices[0].message.content
                     if content:
-                        import re
-                        content_cleaned = content.strip()
-                        md_match = re.search(r'```json\s*(.*?)\s*```', content_cleaned, re.DOTALL)
-                        if md_match:
-                            content_cleaned = md_match.group(1)
-                        else:
-                            content_cleaned = content_cleaned.replace("```", "")
-                            json_match = re.search(r'(\[.*\]|\{.*\})', content_cleaned, re.DOTALL)
-                            if json_match:
-                                content_cleaned = json_match.group(1)
-                        data = json.loads(content_cleaned)
+                        data = extract_json_payload(content)
                         return ReviewResult(
                             summary=data["global_summary"],
                             score=int(data["global_score"]),

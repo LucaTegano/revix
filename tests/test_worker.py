@@ -7,6 +7,8 @@ import pytest
 from app.services.ai import ReviewResult
 from app.worker import ReviewWorker
 
+JOB_ID = uuid.UUID("550e8400-e29b-41d4-a716-446655440000")
+
 
 @pytest.fixture
 def worker() -> ReviewWorker:
@@ -54,7 +56,7 @@ async def test_process_job_success(worker: ReviewWorker) -> None:
         )
         mock_github.post_review.assert_called_once()
         mock_finalize.assert_called_once_with(
-            "550e8400-e29b-41d4-a716-446655440000", 1, "SUCCESS", mock_ai_res.model_dump()
+            JOB_ID, 1, "SUCCESS", mock_ai_res.model_dump()
         )
 
 
@@ -79,7 +81,8 @@ async def test_process_job_failure(worker: ReviewWorker) -> None:
 
         await worker.process_job(job)
 
-        mock_finalize.assert_called_once_with("550e8400-e29b-41d4-a716-446655440000", 1, "FAILURE")
+        mock_finalize.assert_called_once()
+        assert mock_finalize.call_args.args[:3] == (JOB_ID, 1, "FAILURE")
 
 
 @pytest.mark.asyncio

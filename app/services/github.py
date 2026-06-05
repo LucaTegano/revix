@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 class GitHubService:
     BASE_URL = "https://api.github.com"
     MAX_PAYLOAD_SIZE = 60_000
+    MAX_COMMENT_BODY_SIZE = 8_000
 
     def __init__(self) -> None:
         self.client = httpx.AsyncClient(
@@ -26,6 +27,37 @@ class GitHubService:
 
     async def close(self) -> None:
         await self.client.aclose()
+
+    def _truncate(self, value: str, limit: int) -> str:
+        if len(value) <= limit:
+            return value
+        marker = "\n\n[Revix truncated this message to fit GitHub API limits.]"
+        return value[: max(0, limit - len(marker))] + marker
+
+    def _format_review_comment(self, comment: dict[str, Any]) -> dict[str, Any] | None:
+        path = comment.get("path")
+        line = comment.get("line")
+        body = comment.get("body")
+        if not isinstance(path, str) or not path.strip():
+            logger.warning("Skipping GitHub review comment with invalid path: %s", comment)
+            return None
+        if not isinstance(line, int) or line < 1:
+            logger.warning("Skipping GitHub review comment with invalid line: %s", comment)
+            return None
+        if not isinstance(body, str) or not body.strip():
+            logger.warning("Skipping GitHub review comment with invalid body: %s", comment)
+            return None
+
+        side = comment.get("side", "RIGHT")
+        if side not in ("LEFT", "RIGHT"):
+            side = "RIGHT"
+
+        return {
+            "path": path,
+            "line": line,
+            "side": side,
+            "body": self._truncate(body, self.MAX_COMMENT_BODY_SIZE),
+        }
 
     def _generate_jwt(self) -> str:
         now = int(time.time())
@@ -133,6 +165,7 @@ class GitHubService:
         signature = f"<!-- revix: {commit_id} -->"
         if signature not in body:
             body += f"\n\n{signature}"
+        body = self._truncate(body, self.MAX_PAYLOAD_SIZE)
 
         try:
             resp = await self.client.get(url, headers=headers)
@@ -148,14 +181,9 @@ class GitHubService:
         # Note: GitHub Review API expects 'path', 'line', 'body', 'side' (optional)
         formatted_comments = []
         for c in comments:
-            formatted_comments.append(
-                {
-                    "path": c["path"],
-                    "line": c["line"],
-                    "side": c.get("side", "RIGHT"),
-                    "body": c["body"],
-                }
-            )
+            formatted_comment = self._format_review_comment(c)
+            if formatted_comment:
+                formatted_comments.append(formatted_comment)
 
         # Post the main summary body as a single review
         await self._send_review_payload(url, headers, commit_id, body, [])

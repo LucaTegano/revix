@@ -4,6 +4,7 @@ import os
 os.environ.setdefault("GITHUB_APP_ID", "12345")
 os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "dummy")
 os.environ.setdefault("GITHUB_APP_PRIVATE_KEY_B64", "ZHVtbXk=")
+os.environ.setdefault("AI_API_KEY", "dummy")
 os.environ.setdefault("GEMINI_API_KEY", "dummy")
 
 import pytest
@@ -22,8 +23,19 @@ from app.services.db.queue import queue_repo
 @pytest.fixture(scope="session")
 def postgres_container():
     """Spins up a testcontainers PostgreSQL database for the test session."""
-    with PostgresContainer("postgres:18-alpine", driver="psycopg") as postgres:
-        yield postgres
+    try:
+        with PostgresContainer("postgres:18-alpine", driver="psycopg") as postgres:
+            yield postgres
+    except Exception as exc:
+        message = str(exc)
+        docker_unavailable = (
+            "Error while fetching server API version" in message
+            or "FileNotFoundError" in message
+            or "docker.sock" in message
+        )
+        if docker_unavailable:
+            pytest.skip(f"Docker is not available for Postgres integration tests: {exc}")
+        raise
 
 
 @pytest.fixture(scope="session")

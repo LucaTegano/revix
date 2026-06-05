@@ -43,8 +43,9 @@ logger = logging.getLogger(__name__)
 # --- OpenTelemetry Setup ---
 resource = Resource(attributes={SERVICE_NAME: "revix-api"})
 provider = TracerProvider(resource=resource)
-processor = BatchSpanProcessor(ConsoleSpanExporter())
-provider.add_span_processor(processor)
+if settings.DEBUG:
+    processor = BatchSpanProcessor(ConsoleSpanExporter())
+    provider.add_span_processor(processor)
 trace.set_tracer_provider(provider)
 
 

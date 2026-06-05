@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -135,21 +136,67 @@ class ReviewWorker:
             except Exception:
                 logger.error("Heartbeat error for %s", sha)
 
+    def _parse_job_payload(self, payload: Any) -> dict[str, Any]:
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            msg = "Job payload must be a JSON object"
+            raise ValueError(msg)
+        if "installation_id" not in payload:
+            msg = "Job payload is missing installation_id"
+            raise ValueError(msg)
+        return payload
+
+    def _parse_trace_context(self, trace_context: Any) -> dict[str, Any]:
+        if isinstance(trace_context, str):
+            trace_context = json.loads(trace_context)
+        return trace_context if isinstance(trace_context, dict) else {}
+
+    def _retry_delay_for(self, error: Exception, attempt_count: int) -> int:
+        import time
+
+        delay = max(60, 60 * max(attempt_count, 1))
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers:
+            retry_after = headers.get("retry-after")
+            x_ratelimit_reset = headers.get("x-ratelimit-reset")
+            if retry_after:
+                with contextlib.suppress(ValueError):
+                    return max(0, int(retry_after))
+            if x_ratelimit_reset:
+                with contextlib.suppress(ValueError):
+                    return max(0, int(x_ratelimit_reset) - int(time.time()))
+        return delay
+
+    def _is_rate_limit(self, error: Exception) -> bool:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+        return status_code == 429 or "429" in str(error) or "rate_limit" in str(error).lower()
+
     async def process_job(self, job: dict[str, Any]) -> None:
-        job_id, sha, repo, pr_num, fence = (
-            job["id"],
-            job["commit_sha"],
-            job["repo_full_name"],
-            job["pr_number"],
-            job["fence_token"],
-        )
-        payload = json.loads(job["payload"]) if isinstance(job["payload"], str) else job["payload"]
-        inst_id = payload["installation_id"]
-        trace_ctx = (
-            json.loads(job["otel_context"])
-            if isinstance(job.get("otel_context"), str)
-            else (job.get("otel_context") or {})
-        )
+        job_id: uuid.UUID | None = None
+        fence: int | None = None
+        try:
+            job_id = uuid.UUID(str(job["id"]))
+            sha = str(job["commit_sha"])
+            repo = str(job["repo_full_name"])
+            pr_num = int(job["pr_number"])
+            fence = int(job["fence_token"])
+            payload = self._parse_job_payload(job.get("payload"))
+            inst_id = int(payload["installation_id"])
+            trace_ctx = self._parse_trace_context(job.get("otel_context"))
+        except Exception as e:
+            logger.exception("Invalid job payload")
+            if job_id is not None and fence is not None:
+                with contextlib.suppress(Exception):
+                    await db_service.finalize_job(
+                        job_id,
+                        fence,
+                        "FAILURE",
+                        {"error": f"Invalid job payload: {e}"},
+                    )
+            return
 
         heartbeat = asyncio.create_task(self._run_heartbeat(job_id, sha))
         parent_context = propagate.extract(trace_ctx)
@@ -158,13 +205,14 @@ class ReviewWorker:
             span.set_attributes({"commit_sha": sha, "repo": repo, "worker_id": self.worker_id})
             github = GitHubService()
             check_run_id = None
+            token: str | None = None
             try:
                 token = await github.get_token(inst_id)
 
                 # Create Check Run (The "Yellow Circle")
                 try:
                     check_run_id = await github.create_check_run(repo, sha, token)
-                    await queue_repo.set_check_run_id(job_id, check_run_id)
+                    await db_service.set_check_run_id(job_id, check_run_id)
                 except Exception as e:
                     logger.warning("Failed to create check run: %s", e)
 
@@ -245,31 +293,21 @@ class ReviewWorker:
                         },
                     )
 
-                await queue_repo.finalize_job(job_id, fence, "SUCCESS", review_result.model_dump())
+                await db_service.finalize_job(job_id, fence, "SUCCESS", review_result.model_dump())
                 logger.info("✅ Finalized %s with score %d", sha, review_result.score)
                 span.set_status(Status(StatusCode.OK))
 
             except Exception as e:
-                import time
-
-                delay = 60 * (job.get("attempt_count", 1))
-                if hasattr(e, "response") and hasattr(e.response, "headers"):
-                    retry_after = e.response.headers.get("retry-after")
-                    x_ratelimit_reset = e.response.headers.get("x-ratelimit-reset")
-                    if retry_after:
-                        delay = int(retry_after)
-                    elif x_ratelimit_reset:
-                        delay = max(0, int(x_ratelimit_reset) - int(time.time()))
-
-                if "429" in str(e) or "rate_limit" in str(e).lower():
+                delay = self._retry_delay_for(e, int(job.get("attempt_count", 1)))
+                if self._is_rate_limit(e):
                     logger.warning("Rate limited", extra={"commit_sha": sha, "delay": delay})
-                    await queue_repo.release_job(job_id, fence, delay_seconds=delay)
+                    await db_service.release_job(job_id, fence, delay_seconds=delay)
                 else:
                     logger.exception("Processing failed", extra={"commit_sha": sha})
                     span.record_exception(e)
                     span.set_status(Status(StatusCode.ERROR))
 
-                    if check_run_id:
+                    if check_run_id and token:
                         try:
                             await github.update_check_run(
                                 repo=repo,
@@ -285,11 +323,18 @@ class ReviewWorker:
                             logger.error("Failed to update check run on error")
 
                     try:
-                        await queue_repo.finalize_job(job_id, fence, "FAILURE")
+                        await db_service.finalize_job(
+                            job_id,
+                            fence,
+                            "FAILURE",
+                            {"error": str(e)},
+                        )
                     except Exception:
                         pass
             finally:
                 heartbeat.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat
                 await github.close()
 
     async def reconciliation_loop(self) -> None:
