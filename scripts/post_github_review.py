@@ -53,6 +53,8 @@ def post_with_gh(repo: str, pr_number: int, data: dict) -> None:
     # Build review body
     status_label = "❌ BLOCKING: REQUEST CHANGES" if score < 80 else "✅ APPROVED"
     body_lines = [
+        "🐰",
+        "",
         "### 🔍 Revix Enterprise Swarm Code Review",
         f"**Quality Score: `{score}/100`** — **{status_label}**",
         "",

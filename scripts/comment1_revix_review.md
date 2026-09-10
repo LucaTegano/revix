@@ -1,3 +1,5 @@
+🐰
+
 ### 🔍 Revix Swarm Multi-Agent Review
 
 **Quality Score:** `30 / 100` — ❌ **BLOCKING: REQUEST CHANGES**  

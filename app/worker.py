@@ -234,6 +234,7 @@ class ReviewWorker:
         decision = "Changes Requested" if score < 80 else "Approved"
 
         body = (
+            f"🐰\n\n"
             f"## 🔍 Revix Review Summary\n\n"
             f"| Metric | Assessment |\n"
             f"| :--- | :--- |\n"

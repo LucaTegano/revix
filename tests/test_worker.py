@@ -231,3 +231,11 @@ def test_worker_selects_top_inline_comments(worker):
 
     assert len(selected) == 1
     assert selected[0].severity == "CRITICAL"
+
+
+def test_worker_review_body_starts_with_rabbit(worker: ReviewWorker) -> None:
+    review_result = ReviewResult(summary="Everything looks good.", score=100, comments=[])
+
+    body = worker._format_review_body(review_result, [], [])
+
+    assert body.startswith("🐰\n\n## 🔍 Revix Review Summary")
