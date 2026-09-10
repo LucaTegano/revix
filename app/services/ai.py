@@ -82,7 +82,11 @@ def normalize_agent_ids(agents: Any, chunk: str) -> list[str]:
         normalized = ["ReviewAgent"]
 
     should_force_verification = settings.REVIEW_PROFILE != "chill"
-    if should_force_verification and ("import " in chunk or "def " in chunk) and "VerificationAgent" not in normalized:
+    if (
+        should_force_verification
+        and ("import " in chunk or "def " in chunk)
+        and "VerificationAgent" not in normalized
+    ):
         normalized.append("VerificationAgent")
 
     return list(dict.fromkeys(normalized))
@@ -280,7 +284,7 @@ class AIService:
 
     def __init__(self) -> None:
         self.indexer = RepoIndexer()
-        self.semaphore = asyncio.Semaphore(2)  # Lowered concurrency to avoid 15 RPM limit
+        self.semaphore = asyncio.Semaphore(settings.AI_CONCURRENCY)
 
     async def _run_in_sandbox(self, script_content: str) -> dict[str, Any]:
         """Executes code in an isolated gVisor sandbox via Docker."""
@@ -339,14 +343,14 @@ class AIService:
         if model.startswith("openrouter/"):
             kwargs["api_base"] = "https://openrouter.ai/api/v1"
             kwargs["extra_headers"] = {
-                "HTTP-Referer": "https://github.com/LucaTegano/revix",
-                "X-Title": "Revix",
+                "HTTP-Referer": "https://revix.dev",
+                "X-Title": settings.PROJECT_NAME,
             }
         elif settings.AI_API_BASE:
             kwargs["api_base"] = settings.AI_API_BASE
 
-        if settings.active_api_key:
-            kwargs["api_key"] = settings.active_api_key
+        if settings.AI_API_KEY:
+            kwargs["api_key"] = settings.AI_API_KEY
         if settings.AI_FALLBACK_MODELS:
             kwargs["fallbacks"] = settings.AI_FALLBACK_MODELS
         return kwargs
@@ -459,7 +463,7 @@ class AIService:
             "route",
         )
         score += sum(4 for term in high_risk_terms if term in text)
-        if filename.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".go")):
+        if filename.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".cpp", ".c", ".h", ".rs")):
             score += 3
         return score
 
@@ -559,10 +563,7 @@ class AIService:
             return cap_agent_ids(normalize_agent_ids(data, chunk))
         except Exception:
             logger.exception("Coordinator routing failed")
-            # If it's a script, we REALLY want verification
-            if "import " in chunk or "def " in chunk:
-                return ["ReviewAgent", "VerificationAgent"]
-            return ["ReviewAgent"]
+            return ["ReviewAgent", "SecurityAgent"]
 
     async def _execute_agent(self, agent_id: str, chunk: str, intent: str) -> ReviewResult | None:
         """Executes a specific agent on a chunk."""
@@ -755,12 +756,17 @@ class AIService:
                         "- 'global_score': an integer score from 0 to 100\n\n"
                         "Summaries:\n" + "\n".join(summaries)
                     )
-                    kwargs.update({
-                        "messages": [
-                            {"role": "system", "content": "You are a review synthesis helper. Output JSON only."},
-                            {"role": "user", "content": prompt}
-                        ]
-                    })
+                    kwargs.update(
+                        {
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": "You are a review synthesis helper. Output JSON only.",
+                                },
+                                {"role": "user", "content": prompt},
+                            ]
+                        }
+                    )
                     async with self.semaphore:
                         response = await acompletion(**kwargs)
                     content = response.choices[0].message.content

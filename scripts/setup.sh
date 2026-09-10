@@ -5,95 +5,59 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-# Fix working directory to project root
+# Working directory to project root
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-echo -e "${GREEN}🚀 Revix Setup Wizard${NC}"
-echo -e "---------------------"
+echo -e "${GREEN}🚀 Revix Setup (Palantir-Grade Standard)${NC}"
+echo -e "----------------------------------------"
 
 # 1. Dependency Checks
-echo -e "\n🔍 Checking dependencies..."
-
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}❌ python3 is not installed.${NC}"
+echo -e "\n🔍 Checking system dependencies..."
+if ! command -v uv &> /dev/null; then
+    echo -e "${RED}❌ 'uv' is required for fast, deterministic builds.${NC}"
+    echo -e "👉 Install it via: curl -LsSf https://astral.sh/uv/install.sh | sh"
     exit 1
 fi
 
 if ! command -v docker &> /dev/null; then
-    echo -e "${YELLOW}⚠️  Docker is not installed. You won't be able to run 'make db'.${NC}"
+    echo -e "${YELLOW}⚠️  Docker not detected. Required for 'make db' and local sandboxing.${NC}"
 fi
 
-# 2. Environment File Creation
+# 2. Environment Initialization
 if [ ! -f .env ]; then
     echo -e "\n📄 Creating .env from .env.example..."
     cp .env.example .env
     echo -e "${GREEN}✅ .env file created.${NC}"
 else
-    echo -e "\nℹ️  .env file already exists. Merging missing variables..."
-    grep -v '^#' .env.example | grep -v '^$' | while IFS='=' read -r key value; do
-        if ! grep -q "^${key}=" .env; then
-            echo "${key}=${value}" >> .env
-            echo "  + Added missing key: ${key}"
-        fi
-    done
-    echo -e "${GREEN}✅ .env file updated.${NC}"
+    echo -e "ℹ️  .env file already exists."
 fi
 
-# 3. Interactive Prompts (Optional but helpful)
-read -p "❓ Do you want to configure required keys now? (y/N) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    # Helper to update .env
-    update_env() {
-        local key=$1
-        local value=$2
-        # Use sed to update the value. Handles different sed versions on Mac/Linux
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s|^$key=.*|$key=$value|" .env
-        else
-            sed -i "s|^$key=.*|$key=$value|" .env
-        fi
-    }
-
-    echo -e "\n--- API Key ---"
-    read -p "Enter your API Key (AI_API_KEY): " key
-    update_env "AI_API_KEY" "$key"
-
-    echo -e "\n--- GitHub App ---"
-    read -p "GitHub App ID: " app_id
-    update_env "GITHUB_APP_ID" "$app_id"
-    
-    read -p "GitHub Webhook Secret: " webhook_secret
-    update_env "GITHUB_WEBHOOK_SECRET" "$webhook_secret"
-    
-    read -p "GitHub App Private Key (Base64): " b64_key
-    update_env "GITHUB_APP_PRIVATE_KEY_B64" "$b64_key"
+# 3. GitHub Private Key Auto-Detection
+if [ -f "github_private_key.pem" ]; then
+    echo -e "${BLUE}🔑 Detected 'github_private_key.pem' in project root.${NC}"
+    if ! grep -q "^GITHUB_APP_PRIVATE_KEY_PATH=" .env; then
+        echo "GITHUB_APP_PRIVATE_KEY_PATH=./github_private_key.pem" >> .env
+        echo -e "${GREEN}✅ Added GITHUB_APP_PRIVATE_KEY_PATH=./github_private_key.pem to .env${NC}"
+    fi
 fi
 
-# 4. Final Validation
+# 4. Sync Dependencies
+echo -e "\n📦 Syncing dependencies with uv..."
+uv sync
+
+# 5. Validation
 echo -e "\n🧪 Validating configuration..."
-
-# Prefer 'uv run' if uv is installed
-if command -v uv &> /dev/null; then
-    echo -e "📦 Using 'uv run' for validation..."
-    if uv run python3 -m app.config; then
-        echo -e "\n${GREEN}✨ Setup complete! You are ready to go.${NC}"
-        echo -e "👉 Next steps: 'make db' then 'make migrations' then 'make web'"
-    else
-        echo -e "\n${RED}❌ Configuration is invalid. Please check your .env file.${NC}"
-        exit 1
-    fi
+if uv run python3 -m app.config; then
+    echo -e "\n${GREEN}✨ Setup complete! Environment is ready.${NC}"
+    echo -e "👉 Next steps:"
+    echo -e "   1. 'make db'          - Start PostgreSQL container"
+    echo -e "   2. 'make migrations'  - Apply database schema"
+    echo -e "   3. 'make test-ai'     - Verify your AI model connectivity"
+    echo -e "   4. 'make web'         - Launch API server"
 else
-    # Fallback to system python but warn the user
-    echo -e "${YELLOW}⚠️  'uv' not found. Falling back to system python (may fail if dependencies are missing).${NC}"
-    if python3 -m app.config; then
-        echo -e "\n${GREEN}✨ Setup complete! You are ready to go.${NC}"
-        echo -e "👉 Next steps: 'make db' then 'make migrations' then 'make web'"
-    else
-        echo -e "\n${RED}❌ Configuration is invalid. Please check your .env file.${NC}"
-        echo -e "${YELLOW}💡 Tip: Try running 'make install' first to install dependencies.${NC}"
-        exit 1
-    fi
+    echo -e "\n${YELLOW}ℹ️  Please fill in your API and GitHub keys in .env${NC}"
+    echo -e "👉 Then run: uv run python3 -m app.config"
 fi

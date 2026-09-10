@@ -132,7 +132,6 @@ async def test_database_service_shim(db_service, mock_db):
         assert db_core.pool is new_pool
 
 
-
 @pytest.mark.asyncio
 async def test_get_latest_check_run_id(queue_repo, mock_db):
     mock_pool, mock_conn, mock_cur = mock_db

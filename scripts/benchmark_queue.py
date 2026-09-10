@@ -1,8 +1,13 @@
 import asyncio
 import logging
 import random
+import sys
 import time
 from datetime import UTC
+from pathlib import Path
+
+# Add project root to sys.path
+sys.path.append(str(Path(__file__).parent.parent))
 
 from app.services.db.core import db_core
 from app.services.db.queue import queue_repo

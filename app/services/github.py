@@ -65,9 +65,7 @@ class GitHubService:
         iat = now - 60
         exp = iat + (10 * 60)
 
-        # Strip quotes and handle escaped newlines for production reliability
-        raw_key = settings.github_app_private_key
-        private_key = raw_key.replace("\\n", "\n").strip('"').strip("'")
+        private_key = settings.github_app_private_key
 
         payload = {
             "iat": iat,

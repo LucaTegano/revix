@@ -34,3 +34,17 @@ def test_verify_signature_missing() -> None:
         verify_signature(b"{}", "")
     assert excinfo.value.status_code == 401
     assert excinfo.value.detail == "Missing signature"
+
+
+def test_webhook_ping_without_valid_signature() -> None:
+    from fastapi import status
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/webhooks/github",
+        headers={"X-GitHub-Event": "ping", "X-Hub-Signature-256": "sha256=dummy"},
+    )
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED

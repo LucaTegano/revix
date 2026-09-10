@@ -2,8 +2,6 @@ import asyncio
 import hashlib
 import hmac
 import json
-import logging
-import sys
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,30 +13,14 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from pythonjsonlogger import json as jsonlogger
 
-from app.config import get_settings
+from app.config import settings
+from app.logging import setup_logging
 from app.services.db.core import db_core
 from app.services.db.queue import queue_repo
 from app.services.github import GitHubService
 
-db_service = queue_repo
-
-try:
-    settings = get_settings()
-except Exception as e:
-    logging.critical("❌ Configuration error: %s", e)
-    sys.exit(1)
-
-log_handler = logging.StreamHandler(sys.stdout)
-if not settings.DEBUG:
-    log_handler.setFormatter(
-        jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-    )
-logging.basicConfig(
-    handlers=[log_handler], level=logging.INFO if not settings.DEBUG else logging.DEBUG
-)
-logger = logging.getLogger(__name__)
+logger = setup_logging("revix-api", settings.DEBUG)
 
 # --- OpenTelemetry Setup ---
 resource = Resource(attributes={SERVICE_NAME: "revix-api"})
@@ -213,5 +195,5 @@ async def github_webhook(
 
 
 @app.get("/health")
-async def health () -> dict[str, str]:
+async def health() -> dict[str, str]:
     return {"status": "ok"}

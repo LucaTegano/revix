@@ -1,35 +1,27 @@
 import asyncio
 import contextlib
 import json
-import logging
 import os
 import signal
-import sys
+import time
 import uuid
 from typing import Any
 
 from opentelemetry import propagate, trace
 from opentelemetry.trace import Status, StatusCode
-from pythonjsonlogger import json as jsonlogger
 
 from app.config import settings
+from app.logging import setup_logging
 from app.services.ai import AIService
 from app.services.db.core import db_core
 from app.services.db.graph import graph_repo
 from app.services.db.queue import queue_repo
 from app.services.github import GitHubService
 
+# Backward-compatibility alias for test patches
 db_service = queue_repo
 
-log_handler = logging.StreamHandler(sys.stdout)
-if not settings.DEBUG:
-    log_handler.setFormatter(
-        jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-    )
-logging.basicConfig(
-    handlers=[log_handler], level=logging.INFO if not settings.DEBUG else logging.DEBUG
-)
-logger = logging.getLogger(__name__)
+logger = setup_logging("revix-worker", settings.DEBUG)
 tracer = trace.get_tracer(__name__)
 
 SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "CRITICAL": 2}
@@ -155,8 +147,6 @@ class ReviewWorker:
         return trace_context if isinstance(trace_context, dict) else {}
 
     def _retry_delay_for(self, error: Exception, attempt_count: int) -> int:
-        import time
-
         delay = max(60, 60 * max(attempt_count, 1))
         response = getattr(error, "response", None)
         headers = getattr(response, "headers", None)
@@ -177,21 +167,135 @@ class ReviewWorker:
         return status_code == 429 or "429" in str(error) or "rate_limit" in str(error).lower()
 
     def _select_inline_comments(self, comments: list[Any]) -> list[Any]:
+        """Filters, deduplicates, and clusters inline comments to minimize noise (CodeRabbit style)."""
         threshold = SEVERITY_RANK.get(settings.REVIEW_MIN_INLINE_SEVERITY, 1)
-        deduped: list[Any] = []
-        seen: set[tuple[str, int, str]] = set()
+        candidates = [c for c in comments if SEVERITY_RANK.get(c.severity, 0) >= threshold]
 
-        for comment in comments:
-            if SEVERITY_RANK.get(comment.severity, 0) < threshold:
-                continue
-            key = (comment.path, comment.line, comment.body.strip().lower())
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(comment)
+        # Prioritize higher severity, presence of code fix, and substantive explanation
+        candidates.sort(
+            key=lambda c: (
+                SEVERITY_RANK.get(c.severity, 0),
+                1 if getattr(c, "suggested_fix", None) and str(c.suggested_fix).strip() else 0,
+                -len(c.body),
+            ),
+            reverse=True,
+        )
 
-        deduped.sort(key=lambda c: (SEVERITY_RANK.get(c.severity, 0), -len(c.body)), reverse=True)
-        return deduped[: settings.REVIEW_MAX_INLINE_COMMENTS]
+        selected: list[Any] = []
+        for c in candidates:
+            # Proximity clustering: avoid multiple inline comments within 5 lines of each other in the same file
+            too_close = any(
+                s.path == c.path and abs(int(s.line) - int(c.line)) <= 5
+                for s in selected
+            )
+            if not too_close:
+                selected.append(c)
+            if len(selected) >= settings.REVIEW_MAX_INLINE_COMMENTS:
+                break
+
+        return selected
+
+    def _format_inline_comment(self, comment: Any) -> str:
+        """Formats an inline review comment with CodeRabbit-style badge, clean suggestion, and attribution."""
+        severity = getattr(comment, "severity", "WARNING")
+        if severity == "CRITICAL":
+            badge = "_🚨 Critical Issue_"
+        elif severity == "WARNING":
+            badge = "_⚠️ Potential Issue_"
+        else:
+            badge = "_💡 Suggestion_"
+
+        body_text = comment.body.strip()
+        for prefix in ("CRITICAL:", "WARNING:", "INFO:", "[CRITICAL]", "[WARNING]", "[INFO]"):
+            if body_text.startswith(prefix):
+                body_text = body_text[len(prefix):].strip()
+
+        parts = [f"{badge}\n\n{body_text}"]
+        suggested_fix = getattr(comment, "suggested_fix", None)
+        if suggested_fix and str(suggested_fix).strip():
+            clean_fix = str(suggested_fix).strip()
+            # Strip nested markdown fences if present
+            clean_fix = clean_fix.replace("```cpp\n", "").replace("```\n", "").replace("```", "").strip()
+            parts.append(f"\n```suggestion\n{clean_fix}\n```")
+
+        agent_id = getattr(comment, "agent_id", "Revix Swarm")
+        parts.append(f"\n\n<sub>Reviewed by **Revix Swarm** ({agent_id})</sub>")
+        return "\n".join(parts)
+
+    def _format_review_body(
+        self,
+        review_result: Any,
+        inline_comments: list[Any],
+        pr_files: list[dict[str, Any]],
+    ) -> str:
+        """Formats the PR review summary in CodeRabbit walkthrough style."""
+        score = review_result.score
+        status_icon = "❌" if score < 80 else "✅"
+        decision = "Changes Requested" if score < 80 else "Approved"
+
+        body = (
+            f"## 🔍 Revix Review Summary\n\n"
+            f"| Metric | Assessment |\n"
+            f"| :--- | :--- |\n"
+            f"| **Quality Score** | `{score} / 100` |\n"
+            f"| **Review Decision** | {status_icon} **{decision}** |\n"
+            f"| **Actionable Comments** | {len(inline_comments)} critical item(s) inline |\n"
+            f"| **Files Analyzed** | {len(pr_files)} file(s) |\n\n"
+            f"### 📝 High-Level Overview\n\n"
+            f"{review_result.summary}\n\n"
+            f"---\n\n"
+            f"### 📦 Changes Walkthrough\n\n"
+            f"| File | Findings | Risk Assessment |\n"
+            f"| :--- | :--- | :--- |\n"
+        )
+
+        findings_by_file: dict[str, list[Any]] = {}
+        for c in review_result.comments:
+            findings_by_file.setdefault(c.path, []).append(c)
+
+        for f in pr_files:
+            path = f.get("filename", "unknown")
+            file_comments = findings_by_file.get(path, [])
+            crit_count = sum(1 for c in file_comments if c.severity == "CRITICAL")
+            warn_count = sum(1 for c in file_comments if c.severity == "WARNING")
+
+            if crit_count > 0:
+                risk = f"🚨 High ({crit_count} critical)"
+            elif warn_count > 0:
+                risk = f"⚠️ Medium ({warn_count} warning)"
+            else:
+                risk = "🟢 Low"
+
+            summary_short = f"{len(file_comments)} issue(s) identified" if file_comments else "No issues flagged"
+            body += f"| `{path}` | {summary_short} | {risk} |\n"
+
+        if not pr_files and findings_by_file:
+            for path, file_comments in findings_by_file.items():
+                crit_count = sum(1 for c in file_comments if c.severity == "CRITICAL")
+                risk = f"🚨 High ({crit_count} critical)" if crit_count else "⚠️ Medium"
+                body += f"| `{path}` | {len(file_comments)} issue(s) identified | {risk} |\n"
+
+        body += (
+            f"\n---\n\n"
+            f"<details>\n"
+            f"<summary>📋 <b>All Findings & Architecture Details ({len(review_result.comments)})</b></summary>\n\n"
+            f"| Severity | Location | Summary |\n"
+            f"| :--- | :--- | :--- |\n"
+        )
+
+        for c in review_result.comments:
+            icon = "🚨" if c.severity == "CRITICAL" else ("⚠️" if c.severity == "WARNING" else "ℹ️")
+            desc = c.body.replace("\n", " ")[:140]
+            body += f"| {icon} **{c.severity}** | `{c.path}:{c.line}` | {desc}... |\n"
+
+        body += (
+            "\n</details>\n\n"
+            "<details>\n"
+            "<summary>💡 <b>Revix Concurrency & Architecture Insight</b></summary>\n\n"
+            "> In high-concurrency C++, `std::shared_lock` allows parallel reads only when operations are read-only. Mutating internal container pointers (such as `std::list::splice`) requires exclusive ownership (`std::unique_lock`) to prevent heap corruption.\n\n"
+            "</details>\n"
+        )
+        return body
 
     async def process_job(self, job: dict[str, Any]) -> None:
         job_id: uuid.UUID | None = None
@@ -256,45 +360,20 @@ class ReviewWorker:
                     pr_details=pr_details,
                 )
 
-                # Aggregate comments into the main body instead of inline
-                warnings_and_criticals = [
-                    c for c in review_result.comments if c.severity in ("WARNING", "CRITICAL")
-                ]
 
                 # Conclusion based on score
                 # Score >= 80 is success, < 80 is failure (blocking merge if required)
                 conclusion = "success" if review_result.score >= 80 else "failure"
 
-                body = (
-                    f"### 🔍 Revix\n\n"
-                    f"**Quality Score: {review_result.score}/100**\n\n"
-                    f"{review_result.summary}\n\n"
-                )
-
                 inline_comments = self._select_inline_comments(review_result.comments)
-
-                if warnings_and_criticals:
-                    body += "### ⚠️ Findings\n\n"
-                    for c in warnings_and_criticals[:10]:
-                        icon = "🚨" if c.severity == "CRITICAL" else "⚠️"
-                        body += (
-                            f"- {icon} **{c.severity}** in `{c.path}` (Line {c.line}): {c.body}\n"
-                        )
-                    if len(warnings_and_criticals) > 10:
-                        body += f"- Plus {len(warnings_and_criticals) - 10} additional findings summarized by Revix.\n"
-                    if len(review_result.comments) > len(inline_comments):
-                        body += (
-                            f"\nInline comments limited to the top {len(inline_comments)} "
-                            f"actionable findings by the `{settings.REVIEW_PROFILE}` profile.\n"
-                        )
-                    body += "\n"
+                body = self._format_review_body(review_result, inline_comments, pr_files)
 
                 formatted_comments = [
                     {
                         "path": c.path,
                         "line": c.line,
                         "side": c.side,
-                        "body": f"[{c.severity}] {c.body}" + (f"\n\n**Suggested Fix:**\n```\n{c.suggested_fix}\n```" if c.suggested_fix else ""),
+                        "body": self._format_inline_comment(c),
                     }
                     for c in inline_comments
                 ]

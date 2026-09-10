@@ -55,9 +55,7 @@ async def test_process_job_success(worker: ReviewWorker) -> None:
             pr_details={"title": "test", "body": "test"},
         )
         mock_github.post_review.assert_called_once()
-        mock_finalize.assert_called_once_with(
-            JOB_ID, 1, "SUCCESS", mock_ai_res.model_dump()
-        )
+        mock_finalize.assert_called_once_with(JOB_ID, 1, "SUCCESS", mock_ai_res.model_dump())
 
 
 @pytest.mark.asyncio
