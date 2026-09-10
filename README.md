@@ -36,12 +36,28 @@ Revix is measured by system efficiency and detection capability, using industry-
 
 ### System Metrics
 
-| Metric | Result | Impact |
+Measured figures and the scripts that produce them are in
+[`docs/RESILIENCE.md`](docs/RESILIENCE.md). Each is quoted with the assumption
+it rests on.
+
+| Metric | Result | How it was measured |
 | :--- | :--- | :--- |
-| **Token Consumption Efficiency** | **87.7% Reduction** | Map-Reduce chunking vs. full-context dumping. |
-| **Review Generation Speedup** | **3.1x Faster** | Parallel swarm execution vs. sequential analysis. |
-| **Architectural Resilience** | **Zero Job Loss** | Verified via simulated worker termination and heartbeat recovery. |
-| **Queue Dwell p99** | **< 200ms** | Postgres-native `SKIP LOCKED` polling latency. |
+| **Job recovery under fault injection** | **700/700 (100%)** | 500 fault cycles — 395 `SIGKILL`s plus 105 stall/resume cycles — against 8 worker processes (`scripts/chaos_sigkill.py`). |
+| **Stale-token commits rejected** | **105 / 105** | Every resurrected worker was blocked at commit by the fence token. |
+| **Fault detection latency** | **p95 3.66s** | Against a compressed 4s budget (3s staleness + 1s reconcile). Production defaults give a 150s budget. |
+| **WAL removed per heartbeat write** | **98.3%** | UNLOGGED vs LOGGED heartbeat table, `pg_current_wal_lsn()` diff with the idle WAL floor subtracted (`scripts/benchmark_wal.py`). |
+| **Queue dwell p99** | **< 200ms** | Enqueue-to-claim under a 1,000-job burst with inference mocked (`scripts/benchmark_queue.py`). |
+
+Two caveats stated up front, because they change how the numbers should be
+read: the external side effect is **at-least-once** (112 of 700 jobs had their
+side effect replayed — the fence token makes the *commit* exactly-once, not the
+GitHub post), and the share of *total* WAL eliminated by UNLOGGED heartbeats
+ranges from 28% to 91% depending on job duration.
+
+Token-efficiency and pipeline-speedup figures previously published here were
+derived from a model with hardcoded latency constants rather than from
+measurement, and have been withdrawn pending real `prompt_tokens` data from
+LiteLLM.
 
 ### Accuracy Benchmarking (SWE-bench Lite)
 
@@ -54,10 +70,16 @@ Instead of relying on internal "smoke tests," we validate Revix's diagnostic acc
 
 ### Cost Efficiency
 
-By using AST-aware chunking, Revix avoids sending entire files for minor changes:
+Revix uses Tree-sitter chunking to scope each agent's context to the relevant
+syntax blocks rather than dumping whole files, and routes a coordinator pass
+before fanning out to sub-agents. The intended effect is fewer tokens per
+review.
 
-- **Avg. Cost Per Review**: ~$0.003 (87% lower than standard full-file prompting)
-- **Token Efficiency**: "Reduced LLM token consumption by 87% using a Map-Reduce chunking strategy compared to standard full-context prompts."
+**This has not yet been measured.** The earlier "~87% reduction" came from
+`scripts/benchmark_ai_pipeline.py`, which estimates tokens as `len(text) // 4`
+and compares against a hypothetical baseline rather than a recorded one. A
+defensible figure requires logging real `usage.prompt_tokens` from LiteLLM
+across a set of PRs against a full-file control, which is tracked as open work.
 
 ## 🛠 Tech Stack
 

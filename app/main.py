@@ -213,5 +213,5 @@ async def github_webhook(
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+async def health () -> dict[str, str]:
     return {"status": "ok"}

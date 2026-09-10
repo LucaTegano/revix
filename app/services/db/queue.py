@@ -237,7 +237,7 @@ class JobQueueRepository:
                         fence_token = j.fence_token + 1,
                         scheduled_at = CASE
                             WHEN j.attempt_count >= j.max_attempts THEN j.scheduled_at
-                            ELSE NOW() + (INTERVAL '2 minutes' * j.attempt_count)
+                            ELSE NOW() + (%s * INTERVAL '1 second' * j.attempt_count)
                         END,
                         worker_id = NULL
                         WHERE j.id IN (
@@ -248,14 +248,20 @@ class JobQueueRepository:
                                 OR EXISTS (
                                     SELECT 1 FROM worker_heartbeats h
                                     WHERE h.job_id = j2.id
-                                    AND h.heartbeat_at < NOW() - INTERVAL '90 seconds'
+                                    AND h.heartbeat_at < NOW() - (%s * INTERVAL '1 second')
                                 )
                             )
                             FOR UPDATE SKIP LOCKED
                         )
                         RETURNING j.id, j.status, j.attempt_count, j.github_check_run_id, j.repo_full_name, j.payload;
                     """
-                    await cur.execute(query)
+                    await cur.execute(
+                        query,
+                        (
+                            settings.WORKER_RETRY_BACKOFF_SECONDS,
+                            settings.WORKER_HEARTBEAT_STALE_SECONDS,
+                        ),
+                    )
                     rows = await cur.fetchall()
                     if rows:
                         rows = cast(list[dict[str, Any]], rows)

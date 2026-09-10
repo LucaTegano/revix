@@ -130,7 +130,7 @@ class ReviewWorker:
 
     async def _run_heartbeat(self, job_id: uuid.UUID, sha: str) -> None:
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(settings.WORKER_HEARTBEAT_INTERVAL_SECONDS)
             try:
                 alive = await queue_repo.update_heartbeat(job_id, self.worker_id)
                 if not alive:
@@ -413,7 +413,7 @@ class ReviewWorker:
                         await github.close()
             except Exception:
                 logger.exception("Reconciliation error")
-            await asyncio.sleep(60)
+            await asyncio.sleep(settings.WORKER_RECONCILE_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

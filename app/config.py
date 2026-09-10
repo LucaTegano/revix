@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     WORKER_CONCURRENCY: int = 5
     WORKER_SHUTDOWN_TIMEOUT: int = 30  # Matches K8s default grace period
 
+    # --- Recovery Tuning ---
+    # Defaults describe production behaviour. The chaos harness overrides them
+    # to compress the detect-and-recover window from minutes to seconds.
+    WORKER_HEARTBEAT_INTERVAL_SECONDS: int = 30
+    WORKER_HEARTBEAT_STALE_SECONDS: int = 90
+    WORKER_RECONCILE_INTERVAL_SECONDS: int = 60
+    WORKER_RETRY_BACKOFF_SECONDS: int = 120
+
     @model_validator(mode="after")
     def validate_setup(self) -> "Settings":
         """Ensures all required fields for the active provider are present."""
