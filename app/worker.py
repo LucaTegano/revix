@@ -185,8 +185,7 @@ class ReviewWorker:
         for c in candidates:
             # Proximity clustering: avoid multiple inline comments within 5 lines of each other in the same file
             too_close = any(
-                s.path == c.path and abs(int(s.line) - int(c.line)) <= 5
-                for s in selected
+                s.path == c.path and abs(int(s.line) - int(c.line)) <= 5 for s in selected
             )
             if not too_close:
                 selected.append(c)
@@ -208,14 +207,16 @@ class ReviewWorker:
         body_text = comment.body.strip()
         for prefix in ("CRITICAL:", "WARNING:", "INFO:", "[CRITICAL]", "[WARNING]", "[INFO]"):
             if body_text.startswith(prefix):
-                body_text = body_text[len(prefix):].strip()
+                body_text = body_text[len(prefix) :].strip()
 
         parts = [f"{badge}\n\n{body_text}"]
         suggested_fix = getattr(comment, "suggested_fix", None)
         if suggested_fix and str(suggested_fix).strip():
             clean_fix = str(suggested_fix).strip()
             # Strip nested markdown fences if present
-            clean_fix = clean_fix.replace("```cpp\n", "").replace("```\n", "").replace("```", "").strip()
+            clean_fix = (
+                clean_fix.replace("```cpp\n", "").replace("```\n", "").replace("```", "").strip()
+            )
             parts.append(f"\n```suggestion\n{clean_fix}\n```")
 
         agent_id = getattr(comment, "agent_id", "Revix Swarm")
@@ -266,7 +267,11 @@ class ReviewWorker:
             else:
                 risk = "🟢 Low"
 
-            summary_short = f"{len(file_comments)} issue(s) identified" if file_comments else "No issues flagged"
+            summary_short = (
+                f"{len(file_comments)} issue(s) identified"
+                if file_comments
+                else "No issues flagged"
+            )
             body += f"| `{path}` | {summary_short} | {risk} |\n"
 
         if not pr_files and findings_by_file:
@@ -340,14 +345,17 @@ class ReviewWorker:
                     logger.warning("Failed to create check run: %s", e)
 
                 diff = await github.fetch_diff(repo, pr_num, token)
-                pr_files = await github.fetch_pull_files(repo, pr_num, token)
+                pr_files = await github.fetch_pull_files(repo, pr_num, token, head_sha=sha)
                 pr_details = await github.fetch_pull_request(repo, pr_num, token)
 
                 # Index for call graph
                 all_symbols, all_refs = [], []
                 for f in pr_files:
-                    if "patch" in f:
-                        s, r = self.ai.indexer.index_file(f["filename"], f["patch"])
+                    # Index the real file, never the patch: a unified diff parses
+                    # into ERROR nodes and yields bogus symbols/edges.
+                    source = f.get("content")
+                    if source:
+                        s, r = self.ai.indexer.index_file(f["filename"], source)
                         all_symbols.extend([vars(x) for x in s])
                         all_refs.extend([vars(x) for x in r])
                 if all_symbols or all_refs:
@@ -359,7 +367,6 @@ class ReviewWorker:
                     pr_files=pr_files,
                     pr_details=pr_details,
                 )
-
 
                 # Conclusion based on score
                 # Score >= 80 is success, < 80 is failure (blocking merge if required)

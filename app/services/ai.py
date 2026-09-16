@@ -38,6 +38,42 @@ BOUNDARY_TYPES = {
     ".go": {"function_declaration", "method_declaration", "type_declaration"},
 }
 
+HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate used only for chunk-budget decisions, never reported."""
+    return len(text) // 4
+
+
+def parse_changed_lines(patch: str) -> set[int]:
+    """Returns the set of new-file line numbers a unified diff touches.
+
+    Additions map to the line they create. Deletions map to the line they sit
+    against in the new file, so that removing code still selects the enclosing
+    syntax node.
+    """
+    changed: set[int] = set()
+    line_no = 0
+    for raw in patch.splitlines():
+        header = HUNK_HEADER_RE.match(raw)
+        if header:
+            line_no = int(header.group(1))
+            continue
+        if not raw:
+            continue
+        marker = raw[0]
+        if marker == "+":
+            changed.add(line_no)
+            line_no += 1
+        elif marker == "-":
+            changed.add(line_no)
+        elif marker == " ":
+            line_no += 1
+        # "\ No newline at end of file" and anything else: ignore
+    return changed
+
+
 VALID_AGENT_IDS = {
     "ReviewAgent",
     "SecurityAgent",
@@ -242,6 +278,11 @@ class ReviewResult(BaseModel):
 
 class AIService:
     # --- Agent Prompts ---
+    # Without an explicit language contract the model answers in whatever
+    # language it infers from the diff, which produced non-English reviews on
+    # real PRs. Every reviewer-facing prompt pins English.
+    LANGUAGE_DIRECTIVE = "Write every user-facing string in English, regardless of the language used in the code or its comments. "
+
     COORDINATOR_PROMPT = (
         "You are the Swarm Coordinator. Analyze the PR intent and diff. "
         "Route specific code chunks to the appropriate sub-agents: "
@@ -251,7 +292,8 @@ class AIService:
     )
 
     REVIEW_AGENT_PROMPT = (
-        "You are the Review Agent. Focus on logic, flow control, and edge-cases. "
+        LANGUAGE_DIRECTIVE
+        + "You are the Review Agent. Focus on logic, flow control, and edge-cases. "
         "Identify bugs and suggest fixes in JSON format. "
         "Review profile is chill: report only actionable defects likely to affect correctness, "
         "security, data integrity, or production behavior. Do not report style nitpicks, vague "
@@ -259,23 +301,27 @@ class AIService:
     )
 
     SECURITY_AGENT_PROMPT = (
-        "You are the Security Agent. Focus on vulnerabilities, injection risks, and anomalous network calls. "
+        LANGUAGE_DIRECTIVE
+        + "You are the Security Agent. Focus on vulnerabilities, injection risks, and anomalous network calls. "
         "Identify risks and suggest fixes in JSON format. Report only exploitable or realistic risks."
     )
 
     PERFORMANCE_AGENT_PROMPT = (
-        "You are the Performance Agent. Analyze asymptotic complexity and memory allocation. "
+        LANGUAGE_DIRECTIVE
+        + "You are the Performance Agent. Analyze asymptotic complexity and memory allocation. "
         "Identify bottlenecks and suggest optimizations in JSON format. Only comment when the issue "
         "is measurable or likely to affect production scale."
     )
 
     PLANNING_AGENT_PROMPT = (
-        "You are the Planning Agent. Compare the implementation with the PR intent/ticket. "
+        LANGUAGE_DIRECTIVE
+        + "You are the Planning Agent. Compare the implementation with the PR intent/ticket. "
         "Ensure the changes align with the original requirements. Report only meaningful mismatches."
     )
 
     VERIFICATION_AGENT_PROMPT = (
-        "You are the Verification Agent. Generate a standalone Python script to test the logic of the provided code. "
+        LANGUAGE_DIRECTIVE
+        + "You are the Verification Agent. Generate a standalone Python script to test the logic of the provided code. "
         "The script will be executed in a gVisor sandbox. Use the 'run_in_sandbox' tool only when "
         "execution can validate a concrete high-risk behavior."
     )
@@ -355,8 +401,14 @@ class AIService:
             kwargs["fallbacks"] = settings.AI_FALLBACK_MODELS
         return kwargs
 
-    def _chunk_by_ast(self, file_path: str, source: str) -> list[str]:
-        """Splits file into logically bound chunks using tree-sitter. Attempts sub-node split for huge classes."""
+    def _chunk_by_ast(self, file_path: str, source: str, patch: str | None = None) -> list[str]:
+        """Splits a file into logically bound chunks using tree-sitter.
+
+        When ``patch`` is supplied *and* ``source`` is the full file, chunking is
+        scoped to the syntax nodes the diff actually touches. Without a patch the
+        whole file is chunked at boundary nodes (used by tests and by callers that
+        have no diff context).
+        """
         ext = "." + file_path.rsplit(".", 1)[-1] if "." in file_path else ""
         parser = self.indexer.get_parser(ext)
         if not parser:
@@ -366,12 +418,18 @@ class AIService:
         tree = parser.parse(source_bytes)
         boundary_types = BOUNDARY_TYPES.get(ext, set())
 
+        if patch:
+            changed = parse_changed_lines(patch)
+            if changed:
+                scoped = self._chunk_changed_nodes(
+                    file_path, tree, source_bytes, boundary_types, changed
+                )
+                if scoped:
+                    return scoped
+
         chunks = []
         current_chunk = [f"FILE: {file_path}"]
         current_tokens = 0
-
-        def estimate_tokens(text: str) -> int:
-            return len(text) // 4
 
         for node in tree.root_node.children:
             node_text = source_bytes[node.start_byte : node.end_byte].decode(
@@ -422,6 +480,101 @@ class AIService:
 
         return chunks
 
+    def _chunk_changed_nodes(
+        self,
+        file_path: str,
+        tree: Any,
+        source_bytes: bytes,
+        boundary_types: set[str],
+        changed: set[int],
+    ) -> list[str]:
+        """Emits one chunk per top-level syntax node the diff touches.
+
+        A class whose body is larger than the chunk budget is descended into so
+        that an edit to a single method does not drag the whole class along; the
+        class header is kept as context so the agent still knows the receiver.
+        """
+        if tree.root_node.has_error:
+            # `source` was not a parseable file (most likely a raw patch was
+            # passed in). Scoping would silently emit corrupted code, so bail
+            # out and let the caller fall back to unscoped chunking.
+            logger.warning(
+                "Skipping diff-scoped chunking for %s: source has parse errors", file_path
+            )
+            return []
+
+        def touched(node: Any) -> bool:
+            start = node.start_point[0] + 1
+            end = node.end_point[0] + 1
+            return any(start <= line <= end for line in changed)
+
+        # Touched nodes are packed up to the chunk budget rather than emitted
+        # one-per-node. Each chunk becomes a separate agent call carrying its own
+        # system prompt and PR intent, so unpacked emission makes scoping cost
+        # *more* than the full-file baseline on small files.
+        chunks: list[str] = []
+        pending: list[str] = []
+        pending_tokens = 0
+
+        def flush() -> None:
+            nonlocal pending, pending_tokens
+            if pending:
+                chunks.append(f"FILE: {file_path}\n" + "\n\n".join(pending))
+                pending = []
+                pending_tokens = 0
+
+        def add(text: str) -> None:
+            nonlocal pending_tokens
+            tokens = estimate_tokens(text)
+            if pending and pending_tokens + tokens > self.MAX_CHUNK_TOKENS:
+                flush()
+            pending.append(text)
+            pending_tokens += tokens
+
+        for node in tree.root_node.children:
+            if not touched(node):
+                continue
+
+            node_text = source_bytes[node.start_byte : node.end_byte].decode(
+                "utf-8", errors="replace"
+            )
+
+            if (
+                node.type in ("class_definition", "class_declaration")
+                and estimate_tokens(node_text) > self.MAX_CHUNK_TOKENS
+            ):
+                body = node.child_by_field_name("body")
+                if body:
+                    header = (
+                        source_bytes[node.start_byte : body.start_byte]
+                        .decode("utf-8", errors="replace")
+                        .rstrip()
+                    )
+                    emitted = False
+                    for sub in body.children:
+                        if sub.type in boundary_types and touched(sub):
+                            sub_text = source_bytes[sub.start_byte : sub.end_byte].decode(
+                                "utf-8", errors="replace"
+                            )
+                            # Header repeated so the agent knows the receiver.
+                            add(f"{header}\n{sub_text}")
+                            emitted = True
+                    if emitted:
+                        continue
+
+            if estimate_tokens(node_text) > self.MAX_CHUNK_TOKENS:
+                flush()
+                chunks.append(
+                    f"### [SKIP] {file_path} - unit {node.type} too large for review "
+                    f"({estimate_tokens(node_text)} tokens)"
+                )
+                continue
+
+            add(node_text)
+
+        flush()
+        return chunks
+
     def _is_reviewable_file(self, file_path: str) -> bool:
         ignored_suffixes = (
             ".png",
@@ -463,7 +616,9 @@ class AIService:
             "route",
         )
         score += sum(4 for term in high_risk_terms if term in text)
-        if filename.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".cpp", ".c", ".h", ".rs")):
+        if filename.endswith(
+            (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".cpp", ".c", ".h", ".rs")
+        ):
             score += 3
         return score
 
@@ -477,10 +632,23 @@ class AIService:
         chunks: list[str] = []
         max_chunks = max(settings.REVIEW_MAX_CHUNKS, 1)
         for file_info in ranked_files:
-            content = file_info.get("content") or file_info.get("patch", "")
-            if not content:
+            filename = str(file_info["filename"])
+            full_source = file_info.get("content")
+            patch = file_info.get("patch") or ""
+
+            if full_source:
+                # Preferred path: parse the complete file so the AST is valid, and
+                # use the patch only to decide which syntax nodes are in scope.
+                produced = self._chunk_by_ast(filename, str(full_source), patch=str(patch))
+            elif patch:
+                # No file content available (fetch failed, file too large, binary).
+                # The patch is not parseable source, so chunk it unscoped rather
+                # than feeding tree-sitter a diff and emitting mangled code.
+                produced = [f"FILE: {filename}\n{patch}"]
+            else:
                 continue
-            chunks.extend(self._chunk_by_ast(str(file_info["filename"]), str(content)))
+
+            chunks.extend(produced)
             if len(chunks) >= max_chunks:
                 break
 
@@ -727,7 +895,8 @@ class AIService:
                         "messages": [
                             {
                                 "role": "system",
-                                "content": "Synthesize these summaries into one global review.",
+                                "content": self.LANGUAGE_DIRECTIVE
+                                + "Synthesize these summaries into one global review.",
                             },
                             {"role": "user", "content": "Summaries:\n" + "\n".join(summaries)},
                         ],
@@ -761,7 +930,8 @@ class AIService:
                             "messages": [
                                 {
                                     "role": "system",
-                                    "content": "You are a review synthesis helper. Output JSON only.",
+                                    "content": self.LANGUAGE_DIRECTIVE
+                                    + "You are a review synthesis helper. Output JSON only.",
                                 },
                                 {"role": "user", "content": prompt},
                             ]

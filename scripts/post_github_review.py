@@ -97,12 +97,14 @@ def post_with_gh(repo: str, pr_number: int, data: dict) -> None:
                 fix_code = c["suggested_fix"].strip("`").replace("cpp\n", "").strip()
                 comment_text += f"\n\n```suggestion\n{fix_code}\n```"
 
-            formatted_comments.append({
-                "path": file_path,
-                "line": line_num,
-                "side": c.get("side", "RIGHT"),
-                "body": comment_text,
-            })
+            formatted_comments.append(
+                {
+                    "path": file_path,
+                    "line": line_num,
+                    "side": c.get("side", "RIGHT"),
+                    "body": comment_text,
+                }
+            )
         else:
             skipped += 1
 
@@ -118,12 +120,16 @@ def post_with_gh(repo: str, pr_number: int, data: dict) -> None:
 
     print(f"Submitting review to {repo} PR #{pr_number} via `gh api`...")
     print(f"- Total findings: {len(comments)}")
-    print(f"- Inline diff comments attached: {len(formatted_comments)} (architectural findings: {skipped})")
+    print(
+        f"- Inline diff comments attached: {len(formatted_comments)} (architectural findings: {skipped})"
+    )
 
     cmd = [
-        "gh", "api",
+        "gh",
+        "api",
         f"repos/{repo}/pulls/{pr_number}/reviews",
-        "--input", str(payload_path),
+        "--input",
+        str(payload_path),
     ]
 
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -139,7 +145,9 @@ def post_with_gh(repo: str, pr_number: int, data: dict) -> None:
             print(f"❌ Fallback failed:\n{res.stderr}", file=sys.stderr)
             sys.exit(1)
 
-    print(f"✅ Successfully posted Revix Swarm review to https://github.com/{repo}/pull/{pr_number}!")
+    print(
+        f"✅ Successfully posted Revix Swarm review to https://github.com/{repo}/pull/{pr_number}!"
+    )
 
 
 def main() -> None:
@@ -149,7 +157,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if not REVIEW_FILE.exists():
-        print(f"Error: Review result file not found at {REVIEW_FILE}. Run test_fastcache_pr.py first.", file=sys.stderr)
+        print(
+            f"Error: Review result file not found at {REVIEW_FILE}. Run test_fastcache_pr.py first.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     with open(REVIEW_FILE) as f:

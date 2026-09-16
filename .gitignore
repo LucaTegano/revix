@@ -28,3 +28,8 @@ github_private_key.pem
 # Logs
 *.log
 dump.rdb
+
+# Local run artifacts
+scratch/
+scripts/*.json
+coverage.xml

@@ -1,7 +1,7 @@
 [project]
 name = "revix"
 version = "0.1.0"
-description = "AI-powered code review agent"
+description = "Distributed AI code-review service with a Postgres-native job queue"
 authors = [{ name = "Luca", email = "luca2005@gmail.com" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [

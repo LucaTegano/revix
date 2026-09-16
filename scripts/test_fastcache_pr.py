@@ -161,16 +161,33 @@ def check_detected_bugs(review_text: str) -> dict[str, bool]:
 
     # Bug 1: Concurrency race with splice & shared_lock
     # Must flag that mutating the list/splice under shared_lock is unsafe, a data race, or violates thread safety
-    has_splice_shared = ("splice" in text_lower or "shared_lock" in text_lower)
-    flags_as_unsafe = any(term in text_lower for term in [
-        "data race", "data-race", "race condition", "violates", "cannot truly run in parallel",
-        "heap corruption", "not thread-safe", "unsafe", "dereference a dangling"
-    ]) and not ("is safe under shared_lock" in text_lower or "conceptually sound" in text_lower)
+    has_splice_shared = "splice" in text_lower or "shared_lock" in text_lower
+    flags_as_unsafe = any(
+        term in text_lower
+        for term in [
+            "data race",
+            "data-race",
+            "race condition",
+            "violates",
+            "cannot truly run in parallel",
+            "heap corruption",
+            "not thread-safe",
+            "unsafe",
+            "dereference a dangling",
+        ]
+    ) and not ("is safe under shared_lock" in text_lower or "conceptually sound" in text_lower)
     # Check if specific critical comment exists or explicit race identified
-    bug1_detected = has_splice_shared and (flags_as_unsafe or "violates the mutex" in text_lower or "data race" in text_lower)
+    bug1_detected = has_splice_shared and (
+        flags_as_unsafe or "violates the mutex" in text_lower or "data race" in text_lower
+    )
 
     # Bug 2: Missing erase from items_map_
-    bug2_detected = any(term in text_lower for term in ["items_map", "erase", "dangling", "stale", "iterator"]) and any(term in text_lower for term in ["leak", "missing", "pop_back", "memory", "uaf", "use-after-free"])
+    bug2_detected = any(
+        term in text_lower for term in ["items_map", "erase", "dangling", "stale", "iterator"]
+    ) and any(
+        term in text_lower
+        for term in ["leak", "missing", "pop_back", "memory", "uaf", "use-after-free"]
+    )
 
     return {
         "Bug 1 (Data Race: shared_lock + splice)": bug1_detected,
@@ -194,7 +211,11 @@ async def main() -> None:
     # 2. Run Revix Swarm Harness
     print("[2/2] 🐝 Running Method 2: Revix Swarm Harness (Tree-sitter + Multi-Agent)...")
     swarm_result, swarm_time = await run_revix_swarm(ai_service)
-    swarm_text = swarm_result.summary + "\n" + "\n".join(f"{c.severity} in {c.path}:{c.line} - {c.body}" for c in swarm_result.comments)
+    swarm_text = (
+        swarm_result.summary
+        + "\n"
+        + "\n".join(f"{c.severity} in {c.path}:{c.line} - {c.body}" for c in swarm_result.comments)
+    )
     swarm_checks = check_detected_bugs(swarm_text)
 
     # 3. Print Results Comparison
@@ -205,7 +226,9 @@ async def main() -> None:
     print(f"\n--- 1. SOLO LLM (Latency: {solo_time:.2f}s) ---")
     print("Review Snippet:\n" + "\n".join(solo_output.strip().split("\n")[:12]) + "\n...")
 
-    print(f"\n--- 2. REVIX SWARM HARNESS (Latency: {swarm_time:.2f}s, Quality Score: {swarm_result.score}/100) ---")
+    print(
+        f"\n--- 2. REVIX SWARM HARNESS (Latency: {swarm_time:.2f}s, Quality Score: {swarm_result.score}/100) ---"
+    )
     print(f"Global Summary: {swarm_result.summary}")
     print(f"Actionable Comments Generated: {len(swarm_result.comments)}")
     for i, comment in enumerate(swarm_result.comments, 1):
@@ -228,7 +251,9 @@ async def main() -> None:
         print(f"{bug_name:<50} {solo_status:<15} {swarm_status:<15}")
 
     print("-" * 80)
-    print(f"Defect Detection Score: Solo LLM = {solo_score}/2 ({solo_score/2:.0%}) | Revix Swarm = {swarm_score}/2 ({swarm_score/2:.0%})")
+    print(
+        f"Defect Detection Score: Solo LLM = {solo_score}/2 ({solo_score / 2:.0%}) | Revix Swarm = {swarm_score}/2 ({swarm_score / 2:.0%})"
+    )
     print("=" * 80 + "\n")
 
 

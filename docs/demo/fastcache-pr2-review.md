@@ -1,3 +1,22 @@
+> **Archived run.** Revix reviewing a real C++ pull request on `LucaTegano/FastCache`
+> (a private repository) which swapped a `unique_lock` for a `shared_lock` in an
+> LRU cache `get()`. The exact diff under review is embedded in
+> [`scripts/test_fastcache_pr.py`](../../scripts/test_fastcache_pr.py), so the
+> findings below can be checked without access to that repository.
+>
+> The swarm flagged two genuine defects a reader can verify against the diff:
+> `items_list_.splice()` mutates list pointers while running under a *shared*
+> lock (data race → heap corruption), and the eviction path calls `pop_back()`
+> without erasing from `items_map_` (use-after-free plus an unbounded map).
+>
+> The prose below is in Italian: nothing pinned the model's output language at
+> the time of this run. That is fixed — `AIService.LANGUAGE_DIRECTIVE` now
+> prepends an English contract to every reviewer-facing prompt. The output is
+> kept unedited rather than regenerated, because the point of an archived run is
+> that it is the artifact that was actually posted.
+
+---
+
 ### 🔍 Revix Swarm Multi-Agent Review
 
 **Quality Score:** `30 / 100` — ❌ **BLOCKING: REQUEST CHANGES**  

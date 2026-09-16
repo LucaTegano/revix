@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.ai import AIService, RepoIndexer
+from app.services.ai import AIService, RepoIndexer, parse_changed_lines
 
 
 @pytest.fixture
@@ -121,3 +121,109 @@ def test_chunk_by_ast_unsupported_ext(ai_service):
     chunks = ai_service._chunk_by_ast("test.txt", code)
     assert len(chunks) == 1
     assert "FILE: test.txt" in chunks[0]
+
+
+# --- Diff-scoped chunking -------------------------------------------------
+#
+# Regression guard for the defect where the GitHub `patch` field was handed to
+# tree-sitter directly. A unified diff is not parseable source: it yields ERROR
+# nodes, and reassembling node text dropped the diff prefixes and indentation,
+# so agents received code whose structure did not match the real file.
+
+
+FULL_SOURCE = """import os
+
+
+class PaymentProcessor:
+    def __init__(self, gateway):
+        self.gateway = gateway
+
+    def charge(self, amount, currency="USD"):
+        if amount <= 0:
+            raise ValueError("amount must be positive")
+        return self.gateway.send(amount, currency)
+
+
+class AuditLog:
+    def record(self, event):
+        print(event)
+
+
+def unrelated_helper(x):
+    return x * 2
+"""
+
+PATCH = """@@ -5,6 +5,8 @@ class PaymentProcessor:
+     def __init__(self, gateway):
+         self.gateway = gateway
+ 
+-    def charge(self, amount):
+-        return self.gateway.send(amount)
++    def charge(self, amount, currency="USD"):
++        if amount <= 0:
++            raise ValueError("amount must be positive")
++        return self.gateway.send(amount, currency)
+"""
+
+
+def test_parse_changed_lines_maps_additions_to_new_file():
+    changed = parse_changed_lines(PATCH)
+    # Hunk starts at new-file line 5; three context lines, then the additions.
+    assert changed == {8, 9, 10, 11}
+
+
+def test_parse_changed_lines_records_deletions_at_their_position():
+    deletion_only = "@@ -10,4 +10,2 @@\n context\n-gone_one\n-gone_two\n more\n"
+    # Both deletions sit against new-file line 11, which is where the
+    # enclosing syntax node must still be selected from.
+    assert 11 in parse_changed_lines(deletion_only)
+
+
+def test_diff_scoped_chunking_excludes_untouched_nodes(ai_service):
+    chunks = ai_service._chunk_by_ast("payments.py", FULL_SOURCE, patch=PATCH)
+
+    assert chunks, "diff-scoped chunking produced nothing"
+    joined = "\n".join(chunks)
+    assert "PaymentProcessor" in joined
+    assert "AuditLog" not in joined
+    assert "unrelated_helper" not in joined
+
+
+def test_diff_scoped_chunks_are_syntactically_valid(ai_service):
+    """The old implementation emitted code that would not compile."""
+    chunks = ai_service._chunk_by_ast("payments.py", FULL_SOURCE, patch=PATCH)
+
+    for chunk in chunks:
+        body = chunk.split("\n", 1)[1]  # drop the "FILE: ..." header
+        compile(body, "<chunk>", "exec")  # raises SyntaxError on mangled output
+
+
+def test_diff_scoped_chunking_preserves_method_indentation(ai_service):
+    """Methods must stay inside their class, not get hoisted to module level."""
+    chunks = ai_service._chunk_by_ast("payments.py", FULL_SOURCE, patch=PATCH)
+    joined = "\n".join(chunks)
+
+    assert "    def charge(" in joined
+    assert "\ndef charge(" not in joined
+
+
+def test_unparseable_source_falls_back_instead_of_scoping(ai_service):
+    """If a patch is ever passed as `source`, scoping must bail, not mangle."""
+    chunks = ai_service._chunk_by_ast("payments.py", PATCH, patch=PATCH)
+
+    # Falls through to unscoped chunking rather than emitting corrupted nodes.
+    assert len(chunks) == 1
+    assert "FILE: payments.py" in chunks[0]
+
+
+def test_build_review_chunks_prefers_content_over_patch(ai_service):
+    scoped = ai_service._build_review_chunks(
+        [{"filename": "payments.py", "content": FULL_SOURCE, "patch": PATCH}]
+    )
+    assert "AuditLog" not in "\n".join(scoped)
+
+    # Without content there is nothing parseable, so the patch is passed through
+    # verbatim rather than run through tree-sitter.
+    patch_only = ai_service._build_review_chunks([{"filename": "payments.py", "patch": PATCH}])
+    assert len(patch_only) == 1
+    assert "@@" in patch_only[0]

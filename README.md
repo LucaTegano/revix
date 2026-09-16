@@ -1,20 +1,43 @@
-# Revix - Staff-Tier Distributed AI Code Reviewer
+# Revix
 
-Revix is a high-performance, asynchronous code review system built for enterprise-scale repositories. It rejects infrastructure bloat (no Redis, no Celery) in favor of a **Postgres-Native** architecture and **Model-Agnostic** intelligence via LiteLLM.
+A distributed AI code-review service for GitHub pull requests. Postgres-native
+job queue (no Redis, no Celery), model-agnostic inference via LiteLLM, and a
+fault-tolerant worker pool whose recovery behaviour is measured rather than
+asserted.
 
-This project was developed by Luca as an AI-powered code review agent that scales massively while keeping latency and costs extremely low. The implementation particularly focuses on demonstrating enterprise architecture principles using a resilient distributed queue pattern. Detailed reports on architectural decisions can be found in the `docs` directory.
+[![CI](https://github.com/LucaTegano/revix/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaTegano/revix/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+**Measured:** 700/700 jobs recovered across 500 fault-injection cycles ·
+105/105 stale-token commits rejected · 49.2% fewer prompt tokens than
+whole-file review. Methodology and limits: [`docs/RESILIENCE.md`](docs/RESILIENCE.md),
+[`docs/TOKENS.md`](docs/TOKENS.md).
 
 ## 🌟 What the System Does
 
-Revix acts as an automated staff-level engineer that reviews Pull Requests seamlessly via GitHub Webhooks. The system supports:
+A GitHub App webhook fires on a pull request; Revix reviews it and posts inline
+comments plus a check run.
 
-- **Distributed Queuing**: Postgres-native task queue utilizing `SKIP LOCKED` for massive horizontal scaling without two-phase commit overhead.
-- **Multi-Agent Swarm AI**: Orchestrates a sophisticated swarm of specialized agents (Review, Security, Performance, Planning, Verification) for zero-pollution context analysis.
-- **gVisor Sandbox Execution**: Proactively tests code changes by executing agent-generated scripts in a hardened `runsc` (gVisor) sandbox.
-- **Idempotent Webhooks**: Uses `pg_advisory_xact_lock` with MD5-hashed commit SHAs to prevent race conditions during ingestion.
-- **Resilient Recovery**: Background reconciliation tasks that automatically detect and restart jobs from mid-inference worker crashes.
-- **JSON Coercion**: Strict Pydantic validation of AI feedback mapping defects to exact GitHub PR coordinates (line, side, path).
-- **Integrated Tunneling & DevX**: Includes an ngrok container that automatically starts the tunnel with the app, simplifying GitHub App webhook testing.
+- **Postgres-native queue** — `SELECT ... FOR UPDATE SKIP LOCKED` for
+  contention-free concurrent claims, with job state and payload updated in one
+  ACID transaction.
+- **Crash recovery with fencing** — workers heartbeat; a reconciliation loop
+  requeues jobs whose owner went stale, and a monotonic fence token stops a
+  resurrected worker from committing over its successor.
+- **Diff-scoped AST chunking** — Tree-sitter parses the full file and the diff
+  selects which syntax nodes to send, so agents see the changed functions rather
+  than whole files. ([`docs/CHUNKING.md`](docs/CHUNKING.md))
+- **Two-stage agent pipeline** — a routing coordinator decides which specialists
+  (review, security, performance, planning, verification) each chunk needs, then
+  a reducer synthesises their findings into one review.
+- **Sandboxed execution** — the verification agent's generated test scripts run
+  in a `--network=none` container with a read-only mount, under the gVisor
+  (`runsc`) runtime where it is installed.
+- **Idempotent ingestion** — `pg_advisory_xact_lock` keyed on the commit SHA
+  collapses duplicate webhook deliveries.
+- **Typed output** — Pydantic validation maps each finding to exact GitHub
+  coordinates (path, line, side), dropping anything that will not apply cleanly.
 
 ## 🧠 How & Why: The Architecture
 
@@ -32,54 +55,97 @@ LLM inference is slow and resource-intensive. Synchronous processing would block
 
 ## 📊 Performance & Validation
 
-Revix is measured by system efficiency and detection capability, using industry-standard datasets to avoid "toy-project" metrics.
-
-### System Metrics
-
-Measured figures and the scripts that produce them are in
-[`docs/RESILIENCE.md`](docs/RESILIENCE.md). Each is quoted with the assumption
-it rests on.
+Every figure below is produced by a script in `scripts/` that can be re-run, and
+is quoted with the assumption it rests on.
 
 | Metric | Result | How it was measured |
 | :--- | :--- | :--- |
-| **Job recovery under fault injection** | **700/700 (100%)** | 500 fault cycles — 395 `SIGKILL`s plus 105 stall/resume cycles — against 8 worker processes (`scripts/chaos_sigkill.py`). |
-| **Stale-token commits rejected** | **105 / 105** | Every resurrected worker was blocked at commit by the fence token. |
-| **Fault detection latency** | **p95 3.66s** | Against a compressed 4s budget (3s staleness + 1s reconcile). Production defaults give a 150s budget. |
-| **WAL removed per heartbeat write** | **98.3%** | UNLOGGED vs LOGGED heartbeat table, `pg_current_wal_lsn()` diff with the idle WAL floor subtracted (`scripts/benchmark_wal.py`). |
-| **Queue dwell p99** | **< 200ms** | Enqueue-to-claim under a 1,000-job burst with inference mocked (`scripts/benchmark_queue.py`). |
+| **Job recovery under fault injection** | **700 / 700** | 500 fault cycles — 395 `SIGKILL`s plus 105 stall/resume cycles — against 8 worker processes ([`chaos_sigkill.py`](scripts/chaos_sigkill.py)) |
+| **Stale-token commits rejected** | **105 / 105** | Every resurrected worker was blocked at commit by its fence token |
+| **Fault detection latency** | **p95 3.66s** | Against a compressed 4s budget; production defaults give 150s |
+| **Heartbeat WAL volume removed** | **98%** | UNLOGGED vs LOGGED heartbeat table, `pg_current_wal_lsn()` diff ([`benchmark_wal.py`](scripts/benchmark_wal.py)) |
+| **Queue dwell p99** | **< 200ms** | Enqueue-to-claim under a 1,000-job burst, inference mocked ([`benchmark_queue.py`](scripts/benchmark_queue.py)) |
+| **Prompt tokens vs full-file** | **−49.2%** | 262 files from `psf/requests` and `pallets/flask` ([`benchmark_tokens.py`](scripts/benchmark_tokens.py)) |
 
-Two caveats stated up front, because they change how the numbers should be
-read: the external side effect is **at-least-once** (112 of 700 jobs had their
-side effect replayed — the fence token makes the *commit* exactly-once, not the
-GitHub post), and the share of *total* WAL eliminated by UNLOGGED heartbeats
-ranges from 28% to 91% depending on job duration.
+Three deep-dives cover the methodology, including where each guarantee stops:
 
-Token-efficiency and pipeline-speedup figures previously published here were
-derived from a model with hardcoded latency constants rather than from
-measurement, and have been withdrawn pending real `prompt_tokens` data from
-LiteLLM.
+- **[`docs/RESILIENCE.md`](docs/RESILIENCE.md)** — fault injection, fencing, and WAL.
+  Includes the one that matters: `SIGKILL` alone never exercises a fence token,
+  because a killed process cannot come back to present a stale one. Adding
+  `SIGSTOP`/`SIGCONT` is what turned fencing from asserted into demonstrated.
+- **[`docs/TOKENS.md`](docs/TOKENS.md)** — token measurement, validated against
+  the provider's billed `usage.prompt_tokens`, with the saving broken down by
+  diff size (55% on surgical diffs, ~4% on rewrites).
+- **[`docs/CHUNKING.md`](docs/CHUNKING.md)** — the AST-chunking defect that made
+  the token claim unreachable in production, and the fix.
 
-### Accuracy Benchmarking (SWE-bench Lite)
+### Known limits
 
-Instead of relying on internal "smoke tests," we validate Revix's diagnostic accuracy against **SWE-bench Lite**—a collection of 300 real-world Python PRs from repositories like Django, Scikit-learn, and Flask.
+Stated here rather than buried, because they change how the numbers read:
 
-- **Methodology**: We execute our full Multi-Agent Swarm pipeline on a sampled subset of the `test` split.
-- **Validation Harness**: The `scripts/benchmark_swe_bench.py` script automates the ingestion of real-world issue statements and fix patches.
-- **Evaluation**: An LLM-as-a-Judge evaluates if the agents correctly aligned the implementation with the intended problem statement.
-- **Current Status**: Harness implemented and verified; full-scale N=300 validation requires high-tier API quota.
+- **The external side effect is at-least-once.** The fence token makes the
+  database commit exactly-once; `post_review()` reaches GitHub *before*
+  `finalize_job`, so a worker interrupted between the two has its post replayed.
+  Measured: 112 of 700 jobs. Closing it needs idempotency at the boundary — an
+  `Idempotency-Key` on the comment, or an upsert against the check-run ID — not
+  a stronger lock.
+- **Token savings scale with diff size.** A PR touching under 5% of a file saves
+  55%; one rewriting 40%+ of it saves ~4%.
+- **The chaos harness stubs inference.** It validates queue durability, not
+  review quality.
+- **gVisor is best-effort, network isolation is not.** If `runsc` is not
+  installed the sandbox logs a warning and retries under the default Docker
+  runtime; `--network=none` and the read-only mount hold either way, but the
+  syscall-interception boundary does not. Treat gVisor as defence in depth, not
+  as the thing standing between you and untrusted code.
 
-### Cost Efficiency
+### Worked example on a real PR
 
-Revix uses Tree-sitter chunking to scope each agent's context to the relevant
-syntax blocks rather than dumping whole files, and routes a coordinator pass
-before fanning out to sub-agents. The intended effect is fewer tokens per
-review.
+[`docs/demo/`](docs/demo/) archives Revix reviewing a real C++ pull request,
+where it flagged a data race (`splice()` mutating list pointers under a
+`shared_lock`) and a use-after-free in an LRU eviction path, alongside a
+head-to-head against the same model given one monolithic prompt. The diff under
+review is embedded in [`scripts/test_fastcache_pr.py`](scripts/test_fastcache_pr.py),
+so the findings are checkable from this repository alone.
 
-**This has not yet been measured.** The earlier "~87% reduction" came from
-`scripts/benchmark_ai_pipeline.py`, which estimates tokens as `len(text) // 4`
-and compares against a hypothetical baseline rather than a recorded one. A
-defensible figure requires logging real `usage.prompt_tokens` from LiteLLM
-across a set of PRs against a full-file control, which is tracked as open work.
+### Accuracy benchmarking (SWE-bench Lite)
+
+Diagnostic accuracy is validated against **SWE-bench Lite**, 300 real-world
+Python PRs from Django, scikit-learn and Flask. The harness
+([`benchmark_swe_bench.py`](scripts/benchmark_swe_bench.py)) ingests real issue
+statements and fix patches and uses an LLM-as-judge to score whether the agents
+aligned the implementation with the stated problem.
+
+**Status: harness implemented and verified end-to-end; a full N=300 run needs
+API quota this project does not have.** No accuracy figure is claimed until it
+does.
+
+### Reproducing the numbers
+
+Every figure in the table is a script. Stop the worker first — a live worker
+sharing the database steals harness jobs (the chaos harness detects foreign
+consumers and aborts rather than reporting a wrong number).
+
+```bash
+docker compose stop worker
+
+# 700 jobs, 8 workers, 500 SIGKILL + stall/resume cycles
+python scripts/chaos_sigkill.py --jobs 700 --workers 8 --cycles 500 \
+    --job-seconds 2.0 --jitter 1.0 --cycle-delay 0.8
+
+# WAL: UNLOGGED vs LOGGED heartbeat tables
+python scripts/benchmark_wal.py --ops 4000 --jobs 800
+
+# Enqueue-to-claim dwell under a 1,000-job burst
+python scripts/benchmark_queue.py
+
+# Prompt tokens vs a full-file baseline, over a real commit history
+git clone --depth 300 https://github.com/psf/requests.git /tmp/requests
+python scripts/benchmark_tokens.py --repo /tmp/requests --commits 250
+```
+
+Add `--live 12` to the token benchmark to re-validate LiteLLM's tokenizer
+against the provider's billed `usage.prompt_tokens` (needs `AI_API_KEY`).
 
 ## 🛠 Tech Stack
 
@@ -142,11 +208,11 @@ docker compose logs ngrok
 ```text
 revix/
 ├── .github/                  # 🐙 GitHub Actions CI/CD workflows
-├── app/                      # 💻 Source code (Microservices architecture)
+├── app/                      # 💻 Application source
 │   ├── main.py               # Webhook ingestion with advisory locking
 │   ├── worker.py             # Resilient background worker with heartbeat
 │   └── services/             # Core services (ai.py, db.py)
-├── docs/                     # 📚 Documentation & Architecture deep dives
+├── docs/                     # 📚 Architecture, measured results, demo output
 ├── migrations/               # 🗄️ Alembic database migrations
 ├── scripts/                  # 📜 Utility and setup scripts
 ├── tests/                    # 🧪 Pytest test suite

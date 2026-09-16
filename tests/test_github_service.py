@@ -136,3 +136,109 @@ async def test_github_service_errors(github_service):
                 "Rate limit", request=MagicMock(), response=mock_res
             )
             await github_service.fetch_diff("repo", 1, "token")
+
+
+# --- Source fetching for AST chunking -------------------------------------
+#
+# The chunker needs parseable file contents; the PR files endpoint only returns
+# unified diffs. These cover the fetch path and, importantly, its degradations:
+# a file without `content` must still be reviewable from its patch.
+
+
+def _resp(status: int, content: bytes = b"") -> MagicMock:
+    r = MagicMock(spec=httpx.Response)
+    r.status_code = status
+    r.content = content
+    return r
+
+
+@pytest.mark.asyncio
+async def test_fetch_file_content_returns_source(github_service):
+    github_service.client.get = AsyncMock(return_value=_resp(200, b"def f():\n    pass\n"))
+
+    out = await github_service.fetch_file_content("o/r", "a.py", "sha1", "tok")
+
+    assert out == "def f():\n    pass\n"
+    _, kwargs = github_service.client.get.call_args
+    assert kwargs["params"] == {"ref": "sha1"}
+    assert kwargs["headers"]["Accept"] == "application/vnd.github.raw"
+
+
+@pytest.mark.asyncio
+async def test_fetch_file_content_rejects_oversized_file(github_service):
+    big = b"x" * (GitHubService.MAX_SOURCE_FETCH_BYTES + 1)
+    github_service.client.get = AsyncMock(return_value=_resp(200, big))
+
+    assert await github_service.fetch_file_content("o/r", "big.py", "s", "t") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_file_content_rejects_binary(github_service):
+    github_service.client.get = AsyncMock(return_value=_resp(200, b"\xff\xfe\x00\x01"))
+
+    assert await github_service.fetch_file_content("o/r", "x.py", "s", "t") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_file_content_handles_missing_file(github_service):
+    github_service.client.get = AsyncMock(return_value=_resp(404))
+
+    assert await github_service.fetch_file_content("o/r", "gone.py", "s", "t") is None
+
+
+@pytest.mark.asyncio
+async def test_attach_source_skips_removed_and_unpatched(github_service):
+    files = [
+        {"filename": "kept.py", "patch": "@@ -1 +1 @@", "changes": 2},
+        {"filename": "gone.py", "patch": "@@ -1 +0 @@", "changes": 1, "status": "removed"},
+        {"filename": "nopatch.py", "changes": 3},
+    ]
+    github_service.fetch_file_content = AsyncMock(return_value="SRC")
+
+    await github_service._attach_source("o/r", files, "sha", "tok")
+
+    assert files[0]["content"] == "SRC"
+    assert "content" not in files[1]
+    assert "content" not in files[2]
+    github_service.fetch_file_content.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_attach_source_survives_fetch_failure(github_service):
+    """A failed fetch must degrade to patch-only review, not abort the job."""
+    files = [{"filename": "a.py", "patch": "@@ -1 +1 @@", "changes": 2}]
+    github_service.fetch_file_content = AsyncMock(side_effect=httpx.ConnectError("boom"))
+
+    await github_service._attach_source("o/r", files, "sha", "tok")
+
+    assert "content" not in files[0]
+
+
+@pytest.mark.asyncio
+async def test_attach_source_respects_fetch_budget(github_service):
+    files = [
+        {"filename": f"f{i}.py", "patch": "@@ -1 +1 @@", "changes": 2}
+        for i in range(GitHubService.MAX_SOURCE_FETCHES + 5)
+    ]
+    github_service.fetch_file_content = AsyncMock(return_value="SRC")
+
+    await github_service._attach_source("o/r", files, "sha", "tok")
+
+    assert github_service.fetch_file_content.await_count == GitHubService.MAX_SOURCE_FETCHES
+
+
+@pytest.mark.asyncio
+async def test_fetch_pull_files_attaches_source_only_with_head_sha(github_service):
+    payload = [{"filename": "a.py", "patch": "@@ -1 +1 @@", "changes": 2}]
+
+    resp = MagicMock(spec=httpx.Response)
+    resp.json.return_value = payload
+    resp.raise_for_status = MagicMock()
+    github_service.client.get = AsyncMock(return_value=resp)
+    github_service._attach_source = AsyncMock()
+
+    await github_service.fetch_pull_files("o/r", 1, "tok")
+    github_service._attach_source.assert_not_awaited()
+
+    await github_service.fetch_pull_files("o/r", 1, "tok", head_sha="abc")
+    github_service._attach_source.assert_awaited_once()

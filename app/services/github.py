@@ -17,6 +17,10 @@ class GitHubService:
     BASE_URL = "https://api.github.com"
     MAX_PAYLOAD_SIZE = 60_000
     MAX_COMMENT_BODY_SIZE = 8_000
+    # Files above this size are reviewed from their patch alone; pulling a
+    # megabyte of generated code into the AST buys nothing and costs latency.
+    MAX_SOURCE_FETCH_BYTES = 400_000
+    MAX_SOURCE_FETCHES = 20
 
     def __init__(self) -> None:
         self.client = httpx.AsyncClient(
@@ -135,17 +139,65 @@ class GitHubService:
         return cast(dict[str, Any], resp.json())
 
     async def fetch_pull_files(
-        self, repo: str, pull_number: int, token: str
+        self, repo: str, pull_number: int, token: str, head_sha: str | None = None
     ) -> list[dict[str, Any]]:
         """Fetches the list of files and their contents for a PR."""
         resp = await self.client.get(
             f"/repos/{repo}/pulls/{pull_number}/files", headers={"Authorization": f"Bearer {token}"}
         )
         resp.raise_for_status()
-        files = resp.json()
+        files = cast(list[dict[str, Any]], resp.json())
 
-        # For MVP we'll rely on the patch/diff provided in the files response
-        return cast(list[dict[str, Any]], files)
+        if head_sha:
+            await self._attach_source(repo, files, head_sha, token)
+
+        return files
+
+    async def _attach_source(
+        self, repo: str, files: list[dict[str, Any]], head_sha: str, token: str
+    ) -> None:
+        """Populates ``content`` with each file's post-merge source.
+
+        The chunker needs a parseable file to build an AST; a unified diff is not
+        one. Fetches are bounded and failures are non-fatal - a file without
+        ``content`` simply falls back to patch-only review.
+        """
+        budget = self.MAX_SOURCE_FETCHES
+        for f in files:
+            if budget <= 0:
+                break
+            if f.get("status") == "removed" or not f.get("patch"):
+                continue
+            if int(f.get("changes", 0)) == 0:
+                continue
+            budget -= 1
+            try:
+                content = await self.fetch_file_content(repo, str(f["filename"]), head_sha, token)
+            except Exception as exc:  # noqa: BLE001 - degradation is intentional
+                logger.warning("Source fetch failed for %s: %s", f.get("filename"), exc)
+                continue
+            if content is not None:
+                f["content"] = content
+
+    async def fetch_file_content(self, repo: str, path: str, ref: str, token: str) -> str | None:
+        """Fetches one file's raw contents at ``ref``, or None if unusable."""
+        resp = await self.client.get(
+            f"/repos/{repo}/contents/{path}",
+            params={"ref": ref},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.raw",
+            },
+        )
+        if resp.status_code != 200:
+            return None
+        raw = resp.content
+        if len(raw) > self.MAX_SOURCE_FETCH_BYTES:
+            return None
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None  # binary
 
     async def post_review(
         self,
