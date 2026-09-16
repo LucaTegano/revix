@@ -11,7 +11,7 @@ asserted.
 
 **Measured:** 700/700 jobs recovered across 500 fault-injection cycles ·
 105/105 stale-token commits rejected · 49.2% fewer prompt tokens than
-whole-file review. Methodology and limits: [`docs/RESILIENCE.md`](docs/RESILIENCE.md),
+whole-file review · ~3,000 claims/s queue drain. Methodology and limits: [`docs/RESILIENCE.md`](docs/RESILIENCE.md),
 [`docs/TOKENS.md`](docs/TOKENS.md).
 
 ## 🌟 What the System Does
@@ -64,7 +64,7 @@ is quoted with the assumption it rests on.
 | **Stale-token commits rejected** | **105 / 105** | Every resurrected worker was blocked at commit by its fence token |
 | **Fault detection latency** | **p95 3.66s** | Against a compressed 4s budget; production defaults give 150s |
 | **Heartbeat WAL volume removed** | **98%** | UNLOGGED vs LOGGED heartbeat table, `pg_current_wal_lsn()` diff ([`benchmark_wal.py`](scripts/benchmark_wal.py)) |
-| **Queue dwell p99** | **< 200ms** | Enqueue-to-claim under a 1,000-job burst, inference mocked ([`benchmark_queue.py`](scripts/benchmark_queue.py)) |
+| **Queue dwell p99** | **249ms** | Enqueue-to-claim under a 1,000-job burst, 100 worker loops, no inference ([`benchmark_queue.py`](scripts/benchmark_queue.py)) |
 | **Prompt tokens vs full-file** | **−49.2%** | 262 files from `psf/requests` and `pallets/flask` ([`benchmark_tokens.py`](scripts/benchmark_tokens.py)) |
 
 Three deep-dives cover the methodology, including where each guarantee stops:
@@ -93,6 +93,10 @@ Stated here rather than buried, because they change how the numbers read:
   55%; one rewriting 40%+ of it saves ~4%.
 - **The chaos harness stubs inference.** It validates queue durability, not
   review quality.
+- **Queue dwell is bounded by the producer, not by `SKIP LOCKED`.** Enqueueing
+  1,000 jobs takes 280–370ms on its own, so most of the recorded dwell elapsed
+  before any worker could see the job. Drain throughput (~3,000 claims/s) is the
+  more meaningful figure.
 - **gVisor is best-effort, network isolation is not.** If `runsc` is not
   installed the sandbox logs a warning and retries under the default Docker
   runtime; `--network=none` and the read-only mount hold either way, but the
@@ -137,7 +141,9 @@ python scripts/chaos_sigkill.py --jobs 700 --workers 8 --cycles 500 \
 python scripts/benchmark_wal.py --ops 4000 --jobs 800
 
 # Enqueue-to-claim dwell under a 1,000-job burst
-python scripts/benchmark_queue.py
+# (size the pool to the worker count, or you measure pool contention)
+DB_POOL_MIN_SIZE=120 WORKER_CONCURRENCY=60 \
+    python scripts/benchmark_queue.py --jobs 1000 --workers 100
 
 # Prompt tokens vs a full-file baseline, over a real commit history
 git clone --depth 300 https://github.com/psf/requests.git /tmp/requests

@@ -1,184 +1,202 @@
+#!/usr/bin/env python3
+"""Measure enqueue-to-claim dwell time on the Postgres-native queue.
+
+Two regimes are reported, because they answer different questions and only one
+of them is "queue latency":
+
+  cold burst  - N jobs are enqueued, *then* W workers start and drain them.
+                Dominated by worker startup and connection-pool warmup, so it
+                measures cold-start drain, not queue behaviour.
+
+  warm steady - W workers are already polling an empty queue; jobs are then
+                enqueued and each one's dwell is enqueue -> claim. This is the
+                latency a running deployment actually exhibits.
+
+Inference is not simulated. A claimed job is released immediately, so the number
+is queue dwell and nothing else.
+
+  docker compose up -d db
+  python scripts/benchmark_queue.py --jobs 1000 --workers 100
+"""
+
+from __future__ import annotations
+
+import argparse
 import asyncio
 import logging
-import random
+import statistics
 import sys
 import time
 from datetime import UTC
 from pathlib import Path
 
-# Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from app.services.db.core import db_core
-from app.services.db.queue import queue_repo
+from app.config import settings  # noqa: E402
+from app.services.db.core import db_core  # noqa: E402
+from app.services.db.queue import queue_repo  # noqa: E402
 
-# Silence internal logs for clarity
-logging.getLogger("litellm").setLevel(logging.ERROR)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("benchmark")
-
-# Stages to simulate
-STAGES = {
-    "map_chunk": {
-        "model": "gemini/gemini-2.0-flash",
-        "mock_latency": 1.2,
-        "mock_cost_per_chunk": 0.00005,
-    },
-    "reduce": {
-        "model": "anthropic/claude-3-5-sonnet",
-        "mock_latency": 4.5,
-        "mock_cost": 0.015,
-    },
-}
+logging.basicConfig(level=logging.WARNING)
+BENCH_REPO = "benchmark/queue"
 
 
-class BenchmarkStats:
-    def __init__(self):
-        self.pickup_latencies = []
-        self.total_cost = 0.0
-        self.inference_latencies = []
-        self.completed_jobs = 0
+def pct(values: list[float], p: float) -> float:
+    if not values:
+        return float("nan")
+    ordered = sorted(values)
+    idx = min(int(len(ordered) * p), len(ordered) - 1)
+    return ordered[idx]
 
 
-async def producer(n: int) -> int:
-    """Simulates a spike of N concurrent webhooks."""
-    logger.info("🚀 Producer: Simulating %d concurrent webhook ingestions...", n)
-    start = time.time()
-
-    async def insert_job(i: int):
-        sha = f"bench_sha_{int(time.time() * 1000)}_{i}"
-        await queue_repo.enqueue_if_new(
-            sha=sha, repo="benchmark/repo", pull_number=i, installation_id=123
-        )
-        return True
-
-    results = []
-    chunk_size = 5000
-    for chunk_start in range(0, n, chunk_size):
-        chunk_tasks = [insert_job(i) for i in range(chunk_start, min(chunk_start + chunk_size, n))]
-        chunk_results = await asyncio.gather(*chunk_tasks)
-        results.extend(chunk_results)
-
-    end = time.time()
-    enqueued = sum(1 for r in results if r)
-    logger.info("✅ Producer: Enqueued %d/%d jobs in %.2fs", enqueued, n, end - start)
-    return enqueued
-
-
-async def process_job_mock(job: dict, stats: BenchmarkStats):
-    """Simulates the full Map-Reduce pipeline with connection management."""
-    start_inference = time.time()
-
-    # 1. Map Phase (simulating 10 chunks per PR)
-    num_chunks = 10
-    map_latencies = [
-        STAGES["map_chunk"]["mock_latency"] + random.uniform(-0.2, 0.5) for _ in range(num_chunks)
-    ]
-    # Max latency of concurrent map calls
-    await asyncio.sleep(max(map_latencies))
-    stats.total_cost += num_chunks * STAGES["map_chunk"]["mock_cost_per_chunk"]
-
-    # 2. Reduce Phase
-    reduce_latency = STAGES["reduce"]["mock_latency"] + random.uniform(-0.5, 1.5)
-    await asyncio.sleep(reduce_latency)
-    stats.total_cost += STAGES["reduce"]["mock_cost"]
-
-    # Total inference time
-    stats.inference_latencies.append(time.time() - start_inference)
-
-    # Finalize (re-acquires connection)
-    await queue_repo.finalize_job(job["id"], job["fence_token"], "SUCCESS")
-    stats.completed_jobs += 1
-
-
-async def worker_loop(worker_id: int, stats: BenchmarkStats, active_tasks: list) -> None:
-    """Worker polling loop using SKIP LOCKED."""
-    while True:
-        job = await queue_repo.claim_job(f"bench-worker-{worker_id}")
-        if not job:
-            await asyncio.sleep(0.5)
-            continue
-
-        # Track pickup latency
-        created_at = job["created_at"]
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=UTC)
-
-        stats.pickup_latencies.append(time.time() - created_at.timestamp())
-
-        # Start processing in background (connection is released here)
-        task = asyncio.create_task(process_job_mock(job, stats))
-        active_tasks.append(task)
-        # Periodic cleanup
-        if len(active_tasks) > 100:
-            active_tasks[:] = [t for t in active_tasks if not t.done()]
-
-
-async def run_benchmark(num_jobs: int, num_workers: int):
-    await db_core.connect()
+async def _reset() -> None:
     pool = db_core.get_pool()
-
-    logger.info("🧹 Clearing old benchmark data...")
     async with pool.connection() as conn:
-        async with conn:
-            async with conn.cursor() as cur:
-                await cur.execute("DELETE FROM jobs")
-                await cur.execute("DELETE FROM review_records WHERE commit_sha LIKE 'bench_sha_%%'")
+        await conn.execute("DELETE FROM jobs WHERE repo_full_name = %s", (BENCH_REPO,))
 
-    stats = BenchmarkStats()
-    enqueued = await producer(num_jobs)
 
-    logger.info("🧵 Starting %d workers...", num_workers)
-    start_time = time.time()
-    active_ai_tasks = []
+async def _enqueue(n: int, tag: str) -> float:
+    async def one(i: int) -> None:
+        await queue_repo.enqueue_if_new(
+            sha=f"{tag}_{int(time.time() * 1e6)}_{i}",
+            repo=BENCH_REPO,
+            pull_number=i,
+            installation_id=123,
+        )
 
-    worker_tasks = [
-        asyncio.create_task(worker_loop(i, stats, active_ai_tasks)) for i in range(num_workers)
-    ]
+    begin = time.time()
+    for start in range(0, n, 500):
+        await asyncio.gather(*(one(i) for i in range(start, min(start + 500, n))))
+    return time.time() - begin
 
-    # Wait until all jobs are claimed
-    while len(stats.pickup_latencies) < enqueued:
-        await asyncio.sleep(0.1)
 
-    for w in worker_tasks:
-        w.cancel()
+async def _drain(
+    worker_id: int, dwells: list[float], target: int, claimed: list[int], stop: asyncio.Event
+) -> None:
+    """Claims jobs and records enqueue->claim dwell.
 
-    logger.info("⏳ All jobs claimed. Waiting for mock pipeline to complete...")
-    if active_ai_tasks:
-        await asyncio.gather(*active_ai_tasks, return_exceptions=True)
+    Claimed jobs are left in `processing` rather than released: releasing would
+    return them to `pending` and they would be claimed again, counting one job's
+    dwell several times. They are deleted by the reset between regimes.
+    """
+    while not stop.is_set() and len(claimed) < target:
+        job = await queue_repo.claim_job(f"bench-{worker_id}")
+        if job is None:
+            await asyncio.sleep(0.005)
+            continue
+        created = job["created_at"]
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        dwells.append(time.time() - created.timestamp())
+        claimed.append(1)
 
-    total_time = time.time() - start_time
 
-    if stats.pickup_latencies:
-        stats.pickup_latencies.sort()
-        p50 = stats.pickup_latencies[int(len(stats.pickup_latencies) * 0.50)]
-        p95 = stats.pickup_latencies[int(len(stats.pickup_latencies) * 0.95)]
-        p99 = stats.pickup_latencies[int(len(stats.pickup_latencies) * 0.99)]
+async def cold_burst(jobs: int, workers: int) -> tuple[list[float], float]:
+    await _reset()
+    enqueue_s = await _enqueue(jobs, "cold")
+    print(f"    (enqueue of {jobs} jobs took {enqueue_s * 1000:.0f}ms)", flush=True)
+    dwells: list[float] = []
+    claimed: list[int] = []
+    stop = asyncio.Event()
+    drain_start = time.time()
+    tasks = [asyncio.create_task(_drain(w, dwells, jobs, claimed, stop)) for w in range(workers)]
+    deadline = time.time() + 120
+    while len(claimed) < jobs and time.time() < deadline:
+        await asyncio.sleep(0.05)
+    drain_s = time.time() - drain_start
+    stop.set()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    return dwells, drain_s
 
-        avg_inf = sum(stats.inference_latencies) / len(stats.inference_latencies)
 
-        print("\n" + "=" * 60)
-        print("🚀 STAFF-TIER ARCHITECTURE BENCHMARK: POSTGRES-NATIVE QUEUE")
-        print("=" * 60)
-        print(f"Ingestion (500 webhooks)  : {enqueued} Concurrent")
-        print(f"Worker Concurrency         : {num_workers}")
-        print(f"Avg Inference Time (PR)    : {avg_inf:.2f}s")
-        print(f"Estimated Cost per PR      : ${stats.total_cost / enqueued:.4f}")
-        print("-" * 60)
-        print(f"Total Processing Time      : {total_time:.2f}s")
-        print(f"p50 Pickup Latency         : {p50 * 1000:.2f}ms")
-        print(f"p95 Pickup Latency         : {p95 * 1000:.2f}ms")
-        print(f"p99 Pickup Latency         : {p99 * 1000:.2f}ms")
-        print("-" * 60)
-        print("✅ ANALYSIS:")
-        print("1. Connection Isolation: Workers released DB sockets during LLM wait.")
-        print("2. Scalability: Zero lock contention despite thundering herd ingestion.")
-        print("3. Cost Efficiency: Map-Reduce routing saved ~92%% vs single-model Claude.")
-        print("=" * 60)
+async def warm_steady(jobs: int, workers: int) -> tuple[list[float], float]:
+    await _reset()
+    dwells: list[float] = []
+    claimed: list[int] = []
+    stop = asyncio.Event()
 
-    await db_core.disconnect()
+    # Workers poll an empty queue first, so pools are connected and loops hot.
+    tasks = [asyncio.create_task(_drain(w, dwells, jobs, claimed, stop)) for w in range(workers)]
+    await asyncio.sleep(2.0)
+
+    drain_start = time.time()
+    enqueue_s = await _enqueue(jobs, "warm")
+    print(f"    (enqueue of {jobs} jobs took {enqueue_s * 1000:.0f}ms)", flush=True)
+    deadline = time.time() + 180
+    while len(claimed) < jobs and time.time() < deadline:
+        await asyncio.sleep(0.05)
+    drain_s = time.time() - drain_start
+    stop.set()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    return dwells, drain_s
+
+
+def report(label: str, dwells: list[float], note: str, drain_s: float = 0.0) -> None:
+    ms = [d * 1000 for d in dwells]
+    print(f"\n  {label}  (n={len(ms)})")
+    print(f"    {note}")
+    print(
+        f"    p50 {pct(ms, 0.50):8.1f}ms   p95 {pct(ms, 0.95):8.1f}ms   "
+        f"p99 {pct(ms, 0.99):8.1f}ms   max {max(ms):8.1f}ms"
+        if ms
+        else "    no samples"
+    )
+    if ms:
+        print(f"    mean {statistics.fmean(ms):7.1f}ms")
+    if drain_s > 0 and ms:
+        print(
+            f"    drained {len(ms)} jobs in {drain_s * 1000:.0f}ms -> {len(ms) / drain_s:,.0f} claims/s"
+        )
+
+
+async def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--jobs", type=int, default=1000)
+    ap.add_argument("--workers", type=int, default=100)
+    args = ap.parse_args()
+
+    await db_core.connect()
+    pool_max = settings.db_pool_max_size
+    print(f"  connection pool max : {pool_max}")
+    if pool_max < args.workers:
+        print(
+            f"  NOTE: pool ({pool_max}) is smaller than worker loops ({args.workers}),\n"
+            f"        so this run measures pool contention as much as queue behaviour.\n"
+            f"        Re-run with DB_POOL_MIN_SIZE={args.workers + 20} to size it up."
+        )
+    try:
+        print("=" * 68)
+        print("  Enqueue-to-claim dwell  |  Postgres queue, SELECT ... SKIP LOCKED")
+        print("=" * 68)
+        print(f"  jobs {args.jobs}   concurrent worker loops {args.workers}   inference: none")
+
+        print("  running cold burst...", flush=True)
+        cold, cold_s = await cold_burst(args.jobs, args.workers)
+        report(
+            "cold burst",
+            cold,
+            "queue pre-loaded, then workers start - includes pool warmup",
+            cold_s,
+        )
+
+        print("  running warm steady state...", flush=True)
+        warm, warm_s = await warm_steady(args.jobs, args.workers)
+        report(
+            "warm steady state",
+            warm,
+            "workers already polling - this is queue dwell alone",
+            warm_s,
+        )
+        print("\n" + "=" * 68)
+        print(
+            "  Quote the warm figure as queue latency. The cold figure is a\n"
+            "  cold-start measurement and is dominated by worker startup."
+        )
+        print("=" * 68 + "\n")
+        await _reset()
+    finally:
+        await db_core.disconnect()
+    return 0
 
 
 if __name__ == "__main__":
-    # Reduced from 50000, 500 to 1000, 100 so it runs in a reasonable amount of time (e.g. ~1 minute)
-    asyncio.run(run_benchmark(1000, 100))
+    raise SystemExit(asyncio.run(main()))
