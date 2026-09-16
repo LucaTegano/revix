@@ -2,7 +2,7 @@
 name = "revix"
 version = "0.1.0"
 description = "Distributed AI code-review service with a Postgres-native job queue"
-authors = [{ name = "Luca", email = "luca2005@gmail.com" }]
+authors = [{ name = "Luca Tegano", email = "153361485+LucaTegano@users.noreply.github.com" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi==0.136.1",

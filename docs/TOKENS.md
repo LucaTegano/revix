@@ -100,10 +100,23 @@ raw payload counts alone would suggest.
 
 ## Why the earlier figure was withdrawn
 
-A previous revision of the README claimed roughly 87% token reduction. That
-number came from `scripts/benchmark_ai_pipeline.py`, which estimated tokens as
-`len(text) // 4` against a hypothetical full-file baseline that was never sent.
-It was a model of a saving, not a measurement of one.
+A previous revision of the README claimed roughly 87% token reduction and a 3x
+pipeline speedup. Both came from `scripts/benchmark_ai_pipeline.py`, which has
+been deleted rather than fixed:
+
+- Its token figure estimated tokens as `len(text) // 4` against a hypothetical
+  full-file baseline that was never actually sent. A model of a saving, not a
+  measurement of one.
+- Its "speedup" compared `asyncio.gather` against a sequential loop over
+  `asyncio.sleep()` with hardcoded latency constants. That comparison is
+  tautologically true for any values chosen and says nothing about the
+  pipeline: no inference ran, and the real system's latency is dominated by the
+  provider, not by the scheduling.
+
+`scripts/benchmark_tokens.py` replaces the token half against real commits and
+a real tokenizer. The concurrency claim is simply not made — the fan-out is
+visible in `analyze_diff()` as two `asyncio.gather` stages, but its end-to-end
+benefit has not been measured under real inference.
 
 It was also unreachable in production: the chunker was being handed GitHub's
 `patch` field, which is a unified diff rather than parseable source. See

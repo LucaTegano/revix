@@ -64,7 +64,7 @@ is quoted with the assumption it rests on.
 | **Stale-token commits rejected** | **105 / 105** | Every resurrected worker was blocked at commit by its fence token |
 | **Fault detection latency** | **p95 3.66s** | Against a compressed 4s budget; production defaults give 150s |
 | **Heartbeat WAL volume removed** | **98%** | UNLOGGED vs LOGGED heartbeat table, `pg_current_wal_lsn()` diff ([`benchmark_wal.py`](scripts/benchmark_wal.py)) |
-| **Queue dwell p99** | **249ms** | Enqueue-to-claim under a 1,000-job burst, 100 worker loops, no inference ([`benchmark_queue.py`](scripts/benchmark_queue.py)) |
+| **Queue dwell p99** | **250ms** | Enqueue-to-claim under a 1,000-job burst, 100 worker loops, no inference ([`benchmark_queue.py`](scripts/benchmark_queue.py)) |
 | **Prompt tokens vs full-file** | **−49.2%** | 262 files from `psf/requests` and `pallets/flask` ([`benchmark_tokens.py`](scripts/benchmark_tokens.py)) |
 
 Three deep-dives cover the methodology, including where each guarantee stops:
@@ -213,23 +213,29 @@ docker compose logs ngrok
 
 ```text
 revix/
-├── .github/                  # 🐙 GitHub Actions CI/CD workflows
-├── app/                      # 💻 Application source
-│   ├── main.py               # Webhook ingestion with advisory locking
-│   ├── worker.py             # Resilient background worker with heartbeat
-│   └── services/             # Core services (ai.py, db.py)
-├── docs/                     # 📚 Architecture, measured results, demo output
-├── migrations/               # 🗄️ Alembic database migrations
-├── scripts/                  # 📜 Utility and setup scripts
-├── tests/                    # 🧪 Pytest test suite
-├── .env.example              # Example environment variables
-├── docker-compose.yml        # 🐳 Docker services configuration
-├── Makefile                  # Build automation and development commands
-└── README.md                 # 📖 Project documentation
+├── app/
+│   ├── main.py               # Webhook ingestion, HMAC verify, advisory lock
+│   ├── worker.py             # Claim loop, heartbeat, reconciliation
+│   └── services/
+│       ├── ai.py             # Chunking, agent swarm, synthesis
+│       ├── github.py         # App auth, PR fetch, review posting
+│       └── db/               # queue.py (SKIP LOCKED), core.py, graph.py
+├── docs/
+│   ├── RESILIENCE.md         # Fault injection, fencing, WAL, queue dwell
+│   ├── TOKENS.md             # Prompt-token measurement and validation
+│   ├── CHUNKING.md           # The AST-chunking defect and its fix
+│   └── demo/                 # Archived review of a real PR
+├── scripts/
+│   ├── chaos_sigkill.py      # SIGKILL + SIGSTOP fault injection
+│   ├── benchmark_queue.py    # Enqueue-to-claim dwell and drain rate
+│   ├── benchmark_wal.py      # UNLOGGED vs LOGGED heartbeat WAL
+│   ├── benchmark_tokens.py   # Diff-scoped vs full-file prompt tokens
+│   └── benchmark_swe_bench.py
+├── migrations/               # Alembic
+├── tests/
+└── docker-compose.yml
 ```
 
-📚 `docs/` - Documentation & Architecture
-💻 `app/` - Application Source Code
-🗄️ `migrations/` - Database Schema
-🧪 `tests/` - Testing
-📜 `scripts/` - Utility Scripts
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).
