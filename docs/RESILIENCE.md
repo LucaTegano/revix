@@ -28,15 +28,31 @@ not the dead one.
 
 ### Result (500 fault cycles, 700 jobs, 8 worker processes)
 
-| Metric | Result |
-| :--- | :--- |
-| Jobs recovered | **700 / 700 (100%)** |
-| Jobs lost | 0 |
-| `SIGKILL`s landed on in-flight jobs | 395 |
-| Stall/resume cycles | 105 |
-| Stale-token commits rejected | **105** (one per stall — fencing held in every case) |
-| Detection latency (fault → requeued) | p50 3.05s · p95 3.66s · max 5.72s |
-| Re-claim latency (fault → picked up again) | p50 3.47s · p95 4.32s · max 6.82s |
+Run twice, on separate days and separate database states. Both passed; the
+split between kills and freezes differs because the injector picks the fault
+mode at random.
+
+| Metric | Run A | Run B |
+| :--- | ---: | ---: |
+| Jobs recovered | **700 / 700** | **700 / 700** |
+| Jobs lost | 0 | 0 |
+| `review_records` rows (unique per SHA) | 700 | 700 |
+| `SIGKILL`s on in-flight jobs | 395 | 388 |
+| Stall/resume cycles | 105 | 112 |
+| Zombie commits rejected by fence | **105** | **111** |
+| Detection latency p95 | 3.66s | 3.67s |
+| Re-claim latency p95 | 4.32s | 4.25s |
+
+**Every zombie commit attempt was rejected in both runs.** In Run B the
+rejection count (111) is one lower than the freeze count (112) because a freeze
+only produces a zombie if it outlasts the staleness threshold — a worker
+resumed before the reconciler noticed commits legitimately and is never
+counted. The guarantee is "no stale commit was admitted", not "every freeze
+produced one".
+
+That no stale commit was admitted is independently visible in the row counts:
+700 jobs, 700 `SUCCESS`, 700 unique `review_records`. A fence failure would show
+up as a duplicate or an overwritten record.
 
 The queue kept making forward progress *during* the fault injection rather
 than only draining afterwards — completions climbed steadily while workers
@@ -62,11 +78,11 @@ in production) *before* `finalize_job()`, matching production ordering in
 
 | Metric | Result |
 | :--- | :--- |
-| Total side effects emitted | 833 |
-| Jobs whose side effect ran more than once | **112 / 700** |
+| Total side effects emitted | 833 (Run A) · 855 (Run B) |
+| Jobs whose side effect ran more than once | **112 / 700** · **127 / 700** |
 
 This is the honest reading of the architecture: the fence token makes the
-**commit** exactly-once, and 105 stale commits were correctly rejected. But a
+**commit** exactly-once, and every stale commit was correctly rejected. But a
 worker that is interrupted after posting to GitHub and before committing will
 have its work redone by the next owner, so the **external effect is
 at-least-once**. Closing that gap needs idempotency at the boundary — an

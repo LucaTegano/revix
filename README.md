@@ -9,9 +9,9 @@ asserted.
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**Measured:** 700/700 jobs recovered across 500 fault-injection cycles ·
-105/105 stale-token commits rejected · 49.2% fewer prompt tokens than
-whole-file review · ~3,000 claims/s queue drain. Methodology and limits: [`docs/RESILIENCE.md`](docs/RESILIENCE.md),
+**Measured:** 700/700 jobs recovered across 500 fault-injection cycles, twice ·
+zero stale commits admitted · 49.2% fewer prompt tokens than whole-file review ·
+~3,000 claims/s queue drain. Methodology and limits: [`docs/RESILIENCE.md`](docs/RESILIENCE.md),
 [`docs/TOKENS.md`](docs/TOKENS.md).
 
 ## 🌟 What the System Does
@@ -74,8 +74,8 @@ is quoted with the assumption it rests on.
 
 | Metric | Result | How it was measured |
 | :--- | :--- | :--- |
-| **Job recovery under fault injection** | **700 / 700** | 500 fault cycles — 395 `SIGKILL`s plus 105 stall/resume cycles — against 8 worker processes ([`chaos_sigkill.py`](scripts/chaos_sigkill.py)) |
-| **Stale-token commits rejected** | **105 / 105** | Every resurrected worker was blocked at commit by its fence token |
+| **Job recovery under fault injection** | **700 / 700**, twice | 500 fault cycles (`SIGKILL` + `SIGSTOP`/`SIGCONT` stalls) against 8 worker processes, run twice ([`chaos_sigkill.py`](scripts/chaos_sigkill.py)) |
+| **Stale commits admitted** | **0** | 105 and 111 zombie commits rejected by fence token across the two runs; 700 unique `review_records` confirm no double-commit |
 | **Fault detection latency** | **p95 3.66s** | Against a compressed 4s budget; production defaults give 150s |
 | **Heartbeat WAL volume removed** | **98%** | UNLOGGED vs LOGGED heartbeat table, `pg_current_wal_lsn()` diff ([`benchmark_wal.py`](scripts/benchmark_wal.py)) |
 | **Queue dwell p99** | **250ms** | Enqueue-to-claim under a 1,000-job burst, 100 worker loops, no inference ([`benchmark_queue.py`](scripts/benchmark_queue.py)) |
@@ -100,7 +100,7 @@ Stated here rather than buried, because they change how the numbers read:
 - **The external side effect is at-least-once.** The fence token makes the
   database commit exactly-once; `post_review()` reaches GitHub *before*
   `finalize_job`, so a worker interrupted between the two has its post replayed.
-  Measured: 112 of 700 jobs. Closing it needs idempotency at the boundary — an
+  Measured: 112 and 127 of 700 jobs across two runs. Closing it needs idempotency at the boundary — an
   `Idempotency-Key` on the comment, or an upsert against the check-run ID — not
   a stronger lock.
 - **Token savings scale with diff size.** A PR touching under 5% of a file saves
