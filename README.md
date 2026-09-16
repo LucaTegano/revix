@@ -41,17 +41,31 @@ comments plus a check run.
 
 ## 🧠 How & Why: The Architecture
 
-### How it Works: Instant Delegation
+### Ingestion is decoupled from inference
 
-FastAPI intercepts GitHub webhooks, verifies HMAC signatures for security, and instantly delegates the work to the **Postgres-Native Queue**. This ensures the API response is returned to GitHub in milliseconds, preventing timeouts while the heavy lifting happens in the background.
+FastAPI verifies the webhook's HMAC signature, takes a `pg_advisory_xact_lock`
+on the commit SHA, inserts a job row, and returns. No inference happens on the
+request path, so GitHub's delivery timeout is never at risk regardless of how
+long a review takes. Workers claim from the same table.
 
-### Why Postgres-Native (and not Celery)?
+### Why Postgres and not Celery
 
-LLM inference is slow and resource-intensive. Synchronous processing would block GitHub's APIs and cause timeouts. While Celery is a common choice for background tasks, Revix intentionally rejects it to:
+The job already needs a durable row — status, attempt count, fence token, the
+posted check-run ID. Putting the queue in a second system means that row and the
+queue entry can disagree, and every state transition becomes a distributed
+commit across Postgres and the broker.
 
-- **Eliminate Infrastructure Bloat**: No need for Redis or RabbitMQ. PostgreSQL handles both state and queueing.
-- **Solve Atomic Transitions**: Job state and data updates happen in a single ACID transaction, eliminating the "two-phase commit" problem.
-- **Maintain Lean Connections**: Unlike standard task runners that can explode connection counts, our worker uses a stable pool and `SKIP LOCKED` for efficient, high-concurrency polling without contention.
+Keeping both in Postgres collapses that: claiming a job and updating its state
+is one `UPDATE ... RETURNING` inside one transaction, so there is no window
+where a job is claimed but not recorded. `SELECT ... FOR UPDATE SKIP LOCKED`
+gives concurrent workers contention-free claims without an external broker, and
+the operational cost of Redis or RabbitMQ disappears with it.
+
+The trade is real and worth stating: this couples queue throughput to the
+database, and a Postgres-backed queue will not match a dedicated broker at very
+high message rates. For a workload where each job takes tens of seconds of LLM
+inference, throughput is not the binding constraint — correctness across crashes
+is, and that is what the single-transaction design buys.
 
 ## 📊 Performance & Validation
 
