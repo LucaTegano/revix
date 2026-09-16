@@ -112,17 +112,26 @@ head-to-head against the same model given one monolithic prompt. The diff under
 review is embedded in [`scripts/test_fastcache_pr.py`](scripts/test_fastcache_pr.py),
 so the findings are checkable from this repository alone.
 
-### Accuracy benchmarking (SWE-bench Lite)
+### Review accuracy is not measured
 
-Diagnostic accuracy is validated against **SWE-bench Lite**, 300 real-world
-Python PRs from Django, scikit-learn and Flask. The harness
-([`benchmark_swe_bench.py`](scripts/benchmark_swe_bench.py)) ingests real issue
-statements and fix patches and uses an LLM-as-judge to score whether the agents
-aligned the implementation with the stated problem.
+There is no accuracy claim here, and that is deliberate.
 
-**Status: harness implemented and verified end-to-end; a full N=300 run needs
-API quota this project does not have.** No accuracy figure is claimed until it
-does.
+[`scripts/defect_detection_probe.py`](scripts/defect_detection_probe.py) runs the
+swarm and a single generic-prompt baseline over five hand-written diffs, each
+seeding one known defect (authorization bypass, SQL injection, N+1 with a leaked
+handle, None dereference, a fence-token race). It is useful as a regression
+signal when prompts or routing change.
+
+It is **not** a benchmark: n=5, and the fixtures were written by the same person
+who wrote the system under test. An earlier revision of this README described
+this as validation against SWE-bench Lite — "300 real-world Python PRs from
+Django, scikit-learn and Flask". That was wrong; the script never ingested
+SWE-bench, and the repository names in its fixtures are invented. The file was
+named `benchmark_swe_bench.py`, which is what made the claim plausible, and has
+been renamed.
+
+A defensible accuracy figure needs a held-out public dataset the author did not
+write, plus the API quota to run it. That work is open.
 
 ### Reproducing the numbers
 
@@ -230,7 +239,7 @@ revix/
 │   ├── benchmark_queue.py    # Enqueue-to-claim dwell and drain rate
 │   ├── benchmark_wal.py      # UNLOGGED vs LOGGED heartbeat WAL
 │   ├── benchmark_tokens.py   # Diff-scoped vs full-file prompt tokens
-│   └── benchmark_swe_bench.py
+│   └── defect_detection_probe.py  # n=5 seeded-defect smoke test
 ├── migrations/               # Alembic
 ├── tests/
 └── docker-compose.yml

@@ -1,14 +1,26 @@
-"""Empirical Benchmark: SWE-Bench Defect Detection Rate.
+"""Seeded-defect probe: does the swarm catch a bug a generic prompt misses?
 
-Quantifies the empirical lift in defect detection rate achieved by the
-Revix Multi-Agent Swarm (Coordinator + Specialized Sub-Agents) versus a
-Generic Single-Agent code review prompt.
+WHAT THIS IS NOT: this is not SWE-bench. It does not download, ingest, or
+evaluate against SWE-bench Lite or any other public dataset. The file was
+previously named `benchmark_swe_bench.py`, which implied otherwise.
 
-Metric: Defect Recall Rate (% of known bugs caught)
-Expected Lift: +30% to +40% defect detection accuracy.
+WHAT IT IS: five hand-written diffs, each seeding one known defect across a
+different category (authorization bypass, SQL injection, N+1 with a leaked
+handle, None dereference, a fence-token race). Each carries a ground-truth
+description of the defect. The swarm and a single generic-prompt baseline are
+each run over the same diffs and scored on whether they named the seeded bug.
+
+WHAT IT IS WORTH: it is a smoke test with n=5 on fixtures written by the same
+author as the system under test, so it cannot support an accuracy claim. It is
+useful for catching regressions in routing and prompt changes - "did the
+security agent stop noticing the missing tenant check?" - and nothing more.
+No figure from this script is quoted in the README.
+
+A real accuracy number needs a held-out public dataset the author did not
+write. That work is not done.
 
 Usage:
-    python scripts/benchmark_swe_bench.py [--live] [--n SAMPLES]
+    python scripts/defect_detection_probe.py [--live] [--n SAMPLES]
 """
 
 import argparse
@@ -33,7 +45,7 @@ class SWEBenchSample:
     ground_truth_defect: str
 
 
-# Curated suite of representative SWE-bench defects (Security, Logic, Concurrency, Resource Leaks)
+# Hand-written fixtures. The repo names are invented; these are not real PRs.
 CURATED_BENCHMARK_SUITE: list[SWEBenchSample] = [
     SWEBenchSample(
         id="SWE-001-AUTH-BYPASS",
@@ -215,9 +227,9 @@ async def main() -> None:
     ai_service = AIService()
 
     print("\n" + "=" * 75)
-    print("REVIX EMPIRICAL BENCHMARK: SWE-BENCH DEFECT DETECTION RATE")
+    print("SEEDED-DEFECT PROBE  (n=5 hand-written fixtures, NOT SWE-bench)")
     print("=" * 75)
-    print(f"Testing {len(samples)} real-world defects across Security, Logic & Concurrency.")
+    print(f"Testing {len(samples)} seeded defects across Security, Logic & Concurrency.")
     print(f"Mode: {'LIVE LLM EXECUTION' if args.live else 'STANDALONE GROUND-TRUTH HARNESS'}")
     print("-" * 75)
 
@@ -247,14 +259,15 @@ async def main() -> None:
     accuracy_lift = swarm_rate - baseline_rate
 
     print("=" * 75)
-    print("FINAL BENCHMARK RESULTS")
+    print("RESULTS  (smoke test - too small to support an accuracy claim)")
     print("=" * 75)
     print(
         f"Generic Single-Agent Baseline: {baseline_hits}/{total} ({baseline_rate:.1f}%) defects caught"
     )
     print(f"Revix Multi-Agent Swarm:      {swarm_hits}/{total} ({swarm_rate:.1f}%) defects caught")
     print("-" * 75)
-    print(f"🚀 EMPIRICAL BUG DETECTION LIFT: +{accuracy_lift:.1f}% MORE DEFECTS CAUGHT")
+    print(f"Difference on this fixture set: {accuracy_lift:+.1f} percentage points")
+    print("n=5, fixtures written by the author - a regression signal, not a benchmark.")
     print("=" * 75 + "\n")
 
 
