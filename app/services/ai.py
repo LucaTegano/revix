@@ -74,14 +74,6 @@ def parse_changed_lines(patch: str) -> set[int]:
     return changed
 
 
-VALID_AGENT_IDS = {
-    "ReviewAgent",
-    "SecurityAgent",
-    "PerformanceAgent",
-    "PlanningAgent",
-    "VerificationAgent",
-}
-
 
 def extract_json_payload(content: str) -> Any:
     content_cleaned = content.strip()
@@ -105,43 +97,6 @@ def parse_tool_arguments(arguments: Any) -> dict[str, Any]:
             return parsed
     msg = "Tool arguments must be a JSON object"
     raise ValueError(msg)
-
-
-def normalize_agent_ids(agents: Any, chunk: str) -> list[str]:
-    if isinstance(agents, dict):
-        agents = agents.get("agents", ["ReviewAgent"])
-    if not isinstance(agents, list):
-        agents = ["ReviewAgent"]
-
-    normalized = [agent for agent in agents if isinstance(agent, str) and agent in VALID_AGENT_IDS]
-    if not normalized:
-        normalized = ["ReviewAgent"]
-
-    should_force_verification = settings.REVIEW_PROFILE != "chill"
-    if (
-        should_force_verification
-        and ("import " in chunk or "def " in chunk)
-        and "VerificationAgent" not in normalized
-    ):
-        normalized.append("VerificationAgent")
-
-    return list(dict.fromkeys(normalized))
-
-
-def cap_agent_ids(agents: list[str]) -> list[str]:
-    if len(agents) <= settings.REVIEW_MAX_AGENTS_PER_CHUNK:
-        return agents
-
-    priority = {
-        "SecurityAgent": 0,
-        "ReviewAgent": 1,
-        "PlanningAgent": 2,
-        "PerformanceAgent": 3,
-        "VerificationAgent": 4,
-    }
-    return sorted(agents, key=lambda agent: priority.get(agent, 99))[
-        : settings.REVIEW_MAX_AGENTS_PER_CHUNK
-    ]
 
 
 @dataclass
@@ -283,47 +238,14 @@ class AIService:
     # real PRs. Every reviewer-facing prompt pins English.
     LANGUAGE_DIRECTIVE = "Write every user-facing string in English, regardless of the language used in the code or its comments. "
 
-    COORDINATOR_PROMPT = (
-        "You are the Swarm Coordinator. Analyze the PR intent and diff. "
-        "Route specific code chunks to the appropriate sub-agents: "
-        "ReviewAgent (logic), SecurityAgent (vulns), PerformanceAgent (speed), "
-        "VerificationAgent (execution), PlanningAgent (alignment). "
-        "Return a JSON list of routing decisions."
-    )
-
-    REVIEW_AGENT_PROMPT = (
+    CODE_REVIEW_AGENT_PROMPT = (
         LANGUAGE_DIRECTIVE
-        + "You are the Review Agent. Focus on logic, flow control, and edge-cases. "
-        "Identify bugs and suggest fixes in JSON format. "
-        "Review profile is chill: report only actionable defects likely to affect correctness, "
-        "security, data integrity, or production behavior. Do not report style nitpicks, vague "
-        "refactors, or duplicate concerns. Keep each finding concise."
-    )
-
-    SECURITY_AGENT_PROMPT = (
-        LANGUAGE_DIRECTIVE
-        + "You are the Security Agent. Focus on vulnerabilities, injection risks, and anomalous network calls. "
-        "Identify risks and suggest fixes in JSON format. Report only exploitable or realistic risks."
-    )
-
-    PERFORMANCE_AGENT_PROMPT = (
-        LANGUAGE_DIRECTIVE
-        + "You are the Performance Agent. Analyze asymptotic complexity and memory allocation. "
-        "Identify bottlenecks and suggest optimizations in JSON format. Only comment when the issue "
-        "is measurable or likely to affect production scale."
-    )
-
-    PLANNING_AGENT_PROMPT = (
-        LANGUAGE_DIRECTIVE
-        + "You are the Planning Agent. Compare the implementation with the PR intent/ticket. "
-        "Ensure the changes align with the original requirements. Report only meaningful mismatches."
-    )
-
-    VERIFICATION_AGENT_PROMPT = (
-        LANGUAGE_DIRECTIVE
-        + "You are the Verification Agent. Generate a standalone Python script to test the logic of the provided code. "
-        "The script will be executed in a gVisor sandbox. Use the 'run_in_sandbox' tool only when "
-        "execution can validate a concrete high-risk behavior."
+        + "You are Revix's Code Review Agent. Review each change for correctness, security, "
+        "performance, data integrity, production behavior, and alignment with the PR intent. "
+        "Report only actionable defects; do not report style nitpicks, vague refactors, or "
+        "duplicate concerns. Keep findings concise. You may use run_in_sandbox when executing "
+        "a small standalone Python probe can validate a concrete high-risk behavior. "
+        "Submit the final result using the structured submit_review tool."
     )
 
     MAX_CHUNK_TOKENS = 28_000
@@ -666,87 +588,60 @@ class AIService:
         pr_files: list[dict[str, Any]],
         pr_details: dict[str, Any],
     ) -> ReviewResult:
+        """Review AST-scoped chunks with one tool-using agent per chunk."""
         with tracer.start_as_current_span("ai.analyze_diff"):
             intent = f"TITLE: {pr_details.get('title')}\nBODY: {pr_details.get('body')}"
-
-            # 1. AST-aware chunking with a CodeRabbit-style noise budget.
             chunks = self._build_review_chunks(pr_files)
+            if not chunks:
+                return ReviewResult(summary="No reviewable changes found.", score=100)
 
-            # 2. Coordinator Routing
-            routing_tasks = [self._coordinate_routing(chunk, intent) for chunk in chunks]
-            routing_decisions = await asyncio.gather(*routing_tasks)
-
-            # 3. Swarm Execution
-            agent_tasks = []
-            for i, chunk in enumerate(chunks):
-                decisions = cap_agent_ids(routing_decisions[i])
-                for agent_id in decisions:
-                    agent_tasks.append(self._execute_agent(agent_id, chunk, intent))
-
-            if not agent_tasks:
-                return ReviewResult(summary="No issues found by swarm.", score=100)
-
-            results = await asyncio.gather(*agent_tasks)
-
-            # 4. Synthesis
-            all_comments = [c for res in results if res for c in res.comments]
-            summaries = [res.summary for res in results if res]
-
-            return await self._reduce_summaries(summaries, all_comments)
-
-    async def _coordinate_routing(self, chunk: str, intent: str) -> list[str]:
-        """Coordinator decides which agents should look at this chunk using an LLM."""
-        prompt = (
-            "Decide which agents should analyze this code chunk based on the PR intent.\n"
-            "Use a chill review profile: choose the fewest agents needed, prefer ReviewAgent "
-            "or SecurityAgent, and avoid VerificationAgent unless execution is clearly valuable.\n"
-            f"PR INTENT:\n{intent}\n\n"
-            f"CODE CHUNK:\n{chunk}\n\n"
-            "AVAILABLE AGENTS: ReviewAgent, SecurityAgent, PerformanceAgent, VerificationAgent, PlanningAgent.\n"
-            "Return only a JSON list of agent IDs."
-        )
-        try:
-            kwargs = self._get_completion_kwargs(settings.AI_MODEL_MAP)
-            kwargs.update(
-                {
-                    "messages": [
-                        {"role": "system", "content": self.COORDINATOR_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    # Some free models struggle with response_format, we'll handle raw text too
-                }
+            results = await asyncio.gather(
+                *(self._execute_review_agent(chunk, intent) for chunk in chunks)
             )
-            async with self.semaphore:
-                response = await acompletion(**kwargs)
-            content = response.choices[0].message.content
-            if not content:
-                raise ValueError("Empty response from Coordinator")
+            valid_results = [result for result in results if result is not None]
+            if not valid_results:
+                return ReviewResult(summary="Review could not be completed.", score=0)
 
-            try:
-                data = extract_json_payload(content)
-            except json.JSONDecodeError:
-                logger.warning("Failed parsing LLM JSON content directly. Raw content: %r", content)
-                raise
+            return self._merge_results(valid_results)
 
-            return cap_agent_ids(normalize_agent_ids(data, chunk))
-        except Exception:
-            logger.exception("Coordinator routing failed")
-            return ["ReviewAgent", "SecurityAgent"]
+    async def _execute_review_agent(
+        self, chunk: str, intent: str
+    ) -> ReviewResult | None:
+        return await self._analyze_chunk_with_agent(
+            "CodeReviewAgent", self.CODE_REVIEW_AGENT_PROMPT, chunk, intent
+        )
 
-    async def _execute_agent(self, agent_id: str, chunk: str, intent: str) -> ReviewResult | None:
-        """Executes a specific agent on a chunk."""
-        prompts = {
-            "ReviewAgent": self.REVIEW_AGENT_PROMPT,
-            "SecurityAgent": self.SECURITY_AGENT_PROMPT,
-            "PerformanceAgent": self.PERFORMANCE_AGENT_PROMPT,
-            "PlanningAgent": self.PLANNING_AGENT_PROMPT,
-            "VerificationAgent": self.VERIFICATION_AGENT_PROMPT,
-        }
+    def _merge_results(self, results: list[ReviewResult]) -> ReviewResult:
+        """Merge chunk reviews without another LLM call."""
+        severity_rank = {"CRITICAL": 0, "WARNING": 1, "INFO": 2}
+        seen: set[tuple[str, int, str]] = set()
+        comments: list[ReviewComment] = []
 
-        system_prompt = prompts.get(agent_id, self.REVIEW_AGENT_PROMPT)
-        # Implement agent call logic similar to old _analyze_chunk but with specialized prompt
-        # ... simplified for this edit ...
-        return await self._analyze_chunk_with_agent(agent_id, system_prompt, chunk, intent)
+        for result in results:
+            for comment in result.comments:
+                key = (comment.path, comment.line, comment.body.strip().lower())
+                if key not in seen:
+                    seen.add(key)
+                    comments.append(comment)
+
+        comments.sort(key=lambda c: (severity_rank.get(c.severity, 99), c.path, c.line))
+        critical = sum(c.severity == "CRITICAL" for c in comments)
+        warnings = sum(c.severity == "WARNING" for c in comments)
+        info = sum(c.severity == "INFO" for c in comments)
+
+        if comments:
+            summary = (
+                f"Revix found {len(comments)} actionable issue(s): "
+                f"{critical} critical, {warnings} warning, {info} info."
+            )
+        else:
+            summary = "No actionable issues found."
+
+        return ReviewResult(
+            summary=summary,
+            score=min(result.score for result in results),
+            comments=comments,
+        )
 
     async def _analyze_chunk_with_agent(
         self, agent_id: str, system_prompt: str, chunk: str, intent: str
@@ -790,8 +685,7 @@ class AIService:
                 }
             ]
 
-            if agent_id == "VerificationAgent":
-                tools.append(
+            tools.append(
                     {
                         "type": "function",
                         "function": {
@@ -804,7 +698,7 @@ class AIService:
                             },
                         },
                     }
-                )
+            )
 
             try:
                 kwargs = self._get_completion_kwargs(settings.AI_MODEL_MAP)
@@ -866,87 +760,3 @@ class AIService:
             except Exception:
                 logger.exception("Agent %s failed", agent_id)
                 return None
-
-    async def _reduce_summaries(
-        self, summaries: list[str], comments: list[ReviewComment]
-    ) -> ReviewResult:
-        with tracer.start_as_current_span("ai.reduce_summaries"):
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "synthesize_review",
-                        "description": "Synthesize multiple review chunks",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "global_summary": {"type": "string"},
-                                "global_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                            },
-                            "required": ["global_summary", "global_score"],
-                        },
-                    },
-                }
-            ]
-            try:
-                kwargs = self._get_completion_kwargs(settings.AI_MODEL_REDUCE)
-                kwargs.update(
-                    {
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": self.LANGUAGE_DIRECTIVE
-                                + "Synthesize these summaries into one global review.",
-                            },
-                            {"role": "user", "content": "Summaries:\n" + "\n".join(summaries)},
-                        ],
-                        "tools": tools,
-                        "tool_choice": "required",
-                    }
-                )
-                async with self.semaphore:
-                    response = await acompletion(**kwargs)
-                output = parse_tool_arguments(
-                    response.choices[0].message.tool_calls[0].function.arguments
-                )
-                return ReviewResult(
-                    summary=output["global_summary"],
-                    score=output["global_score"],
-                    comments=comments,
-                )
-            except Exception as e:
-                logger.warning("Structured reduce failed, trying fallback text completion: %s", e)
-                try:
-                    kwargs = self._get_completion_kwargs(settings.AI_MODEL_REDUCE)
-                    prompt = (
-                        "Synthesize these summaries into one global review.\n"
-                        "You must respond with a JSON object containing:\n"
-                        "- 'global_summary': a string summary of the changes\n"
-                        "- 'global_score': an integer score from 0 to 100\n\n"
-                        "Summaries:\n" + "\n".join(summaries)
-                    )
-                    kwargs.update(
-                        {
-                            "messages": [
-                                {
-                                    "role": "system",
-                                    "content": self.LANGUAGE_DIRECTIVE
-                                    + "You are a review synthesis helper. Output JSON only.",
-                                },
-                                {"role": "user", "content": prompt},
-                            ]
-                        }
-                    )
-                    async with self.semaphore:
-                        response = await acompletion(**kwargs)
-                    content = response.choices[0].message.content
-                    if content:
-                        data = extract_json_payload(content)
-                        return ReviewResult(
-                            summary=data["global_summary"],
-                            score=int(data["global_score"]),
-                            comments=comments,
-                        )
-                except Exception:
-                    logger.exception("Fallback reduce phase failed")
-                return ReviewResult(summary="Synthesis failed.", score=0, comments=comments)
