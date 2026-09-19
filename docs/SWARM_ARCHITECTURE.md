@@ -1,34 +1,51 @@
-# Swarm Cognitive Engine: Beyond Basic RAG
+# Agent Harness Architecture
 
-Revix abandons the standard Vector RAG approach for code, as it often fails to preserve relational structures like scope, imports, and cross-file dependencies. Instead, it employs a **Multi-Agent Swarm** guided by syntactic analysis.
+Revix uses a deliberately small agent harness for pull-request review. The goal is to keep the useful agentic behavior without paying the complexity and latency cost of a coordinator plus several prompt-specialized agents.
 
-## 1. The Coordinator (Intelligent Routing)
+## 1. AST-aware context selection
 
-The Coordinator is the "brain" of the operation. When a PR arrives:
-1. It retrieves the full PR context (Title, Body, Labels).
-2. It uses **Tree-sitter** to map the diff to a Concrete Syntax Tree (CST).
-3. It identifies the logical boundaries of every change (e.g., "This change affects the `claim_job` method in `queue_repo.py`").
-4. It uses an LLM call to decide which specialized agents are required for each chunk.
+When a PR arrives, Revix retrieves the PR intent and changed files. Tree-sitter maps changed lines to logical syntax boundaries so the model reviews relevant functions, methods, and classes instead of blindly receiving entire files.
 
-## 2. Specialized Agents & Parallel Execution
+Files are ranked with deterministic risk signals and capped by the review chunk budget.
 
-By isolating concerns, Revix minimizes "Context Pollution" and allows each agent to use specialized system prompts and tools.
+## 2. One Code Review Agent
 
-- **Review Agent:** Evaluates pure logic and edge cases.
-- **Security Agent:** Scans for vulnerabilities (OWASP Top 10) and network anomalies.
-- **Performance Agent:** Identifies $O(n^2)$ complexities and memory allocation spikes.
-- **Planning Agent:** Performs "Shift-Left" by comparing the real code against the requirements expressed in the PR description.
+Every selected chunk is reviewed by the same CodeReviewAgent. Its remit combines the former Review, Security, Performance, and Planning roles:
 
-## 3. The Verification Agent (gVisor Sandbox)
+- correctness and edge cases
+- security and data integrity
+- performance problems that matter in production
+- alignment with the PR title and description
 
-The Verification Agent is the most proactive element. It does not just "read" code; it **tests** it.
-- It generates tailored Python/Shell scripts to exercise the modified logic.
-- It executes these scripts in a **cloud-isolated gVisor sandbox** (`docker run --runtime=runsc`).
-- The sandbox has no network access and limited resources, ensuring untrusted code cannot compromise the worker.
-- The results of the execution (stdout/stderr/exit codes) are fed back into the agent's reasoning loop to confirm or refute findings.
+This removes the LLM coordinator call and avoids running several copies of the same model with slightly different system prompts.
 
-## 4. JSON Coercion & Integration
+Chunks can still run concurrently, so the harness retains parallelism where it is useful.
 
-To ensure the system is "not a toy," all agents are forced to output rigidly typed JSON.
-- Every defect includes: `path`, `line`, `side`, `severity`, and `suggested_fix`.
-- These coordinates are mathematically mapped to the GitHub Pull Request API, allowing for precise, automated feedback without human intervention.
+## 3. Sandbox as a tool
+
+Verification is a capability of the CodeReviewAgent rather than a separate agent. The model receives a `run_in_sandbox` tool and may generate a small standalone Python probe when execution can confirm or refute a concrete high-risk finding.
+
+The probe runs in Docker with no network access and prefers the gVisor `runsc` runtime. stdout, stderr, and the exit code are returned to the model before it submits its final review.
+
+## 4. Structured output
+
+The agent submits a typed ReviewResult. Each finding includes the GitHub location, severity, explanation, and optional suggested fix. Pydantic validates the result before it reaches the GitHub integration.
+
+## 5. Deterministic merge
+
+Revix does not use another LLM to synthesize chunk summaries. Python merges results, removes duplicate findings, sorts them by severity and location, chooses the lowest chunk score as the global score, and creates a compact issue-count summary.
+
+The resulting flow is:
+
+```
+PR
+ -> Tree-sitter / risk ranking
+ -> AST-scoped chunks
+ -> CodeReviewAgent (parallel per chunk)
+      -> optional run_in_sandbox
+      -> submit_review
+ -> deterministic dedupe / sort / summary
+ -> GitHub
+```
+
+Compared with the previous swarm, this trades some specialist focus and intelligent routing for fewer model calls, lower latency, lower cost, and a substantially smaller failure surface.
