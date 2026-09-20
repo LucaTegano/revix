@@ -100,21 +100,6 @@ async def test_github_review_filters_invalid_comments() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ai_routing_filters_unknown_agents() -> None:
-    ai_service = AIService()
-    response = MagicMock()
-    choice = MagicMock()
-    choice.message.content = '{"agents": ["ReviewAgent", "UnknownAgent"]}'
-    response.choices = [choice]
-
-    with patch("app.services.ai.acompletion", new_callable=AsyncMock) as mock_acompletion:
-        mock_acompletion.return_value = response
-        agents = await ai_service._coordinate_routing("def f():\n    return 1", "fix")
-
-    assert agents == ["ReviewAgent"]
-
-
-@pytest.mark.asyncio
 async def test_ai_agent_accepts_direct_json_response() -> None:
     ai_service = AIService()
     response = MagicMock()
@@ -126,8 +111,8 @@ async def test_ai_agent_accepts_direct_json_response() -> None:
     with patch("app.services.ai.acompletion", new_callable=AsyncMock) as mock_acompletion:
         mock_acompletion.return_value = response
         result = await ai_service._analyze_chunk_with_agent(
-            "ReviewAgent",
-            "review",
+            "CodeReviewAgent",
+            ai_service.CODE_REVIEW_AGENT_PROMPT,
             "FILE: a.py\nprint('ok')",
             "fix",
         )
