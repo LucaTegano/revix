@@ -130,8 +130,8 @@ class JobQueueRepository:
                         (check_run_id, job_id),
                     )
 
-    async def get_latest_check_run_id(self, repo: str, pr_number: int) -> int | None:
-        """Finds the most recent Check Run ID for a PR."""
+    async def get_check_run_id(self, repo: str, pr_number: int, commit_sha: str) -> int | None:
+        """Finds the Check Run ID for the exact PR head commit."""
         pool = db_core.get_pool()
         async with pool.connection() as conn:
             async with conn:
@@ -140,10 +140,11 @@ class JobQueueRepository:
                         """
                         SELECT github_check_run_id FROM jobs
                         WHERE repo_full_name = %s AND pr_number = %s
+                        AND commit_sha = %s
                         AND github_check_run_id IS NOT NULL
                         ORDER BY created_at DESC LIMIT 1
                         """,
-                        (repo, pr_number),
+                        (repo, pr_number, commit_sha),
                     )
                     row = await cur.fetchone()
                     return row[0] if row else None

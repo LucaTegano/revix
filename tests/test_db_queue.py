@@ -133,12 +133,12 @@ async def test_database_service_shim(db_service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_get_latest_check_run_id(queue_repo, mock_db):
+async def test_get_check_run_id(queue_repo, mock_db):
     mock_pool, mock_conn, mock_cur = mock_db
     mock_cur.fetchone.return_value = (456,)
 
     with patch("app.services.db.queue.db_core.get_pool", return_value=mock_pool):
-        check_id = await queue_repo.get_latest_check_run_id("owner/repo", 1)
+        check_id = await queue_repo.get_check_run_id("owner/repo", 1, "sha123")
         assert check_id == 456
         assert mock_cur.execute.called
 
