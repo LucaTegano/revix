@@ -153,7 +153,17 @@ async def github_webhook(
             comment_body = payload["comment"]["body"].strip().lower()
             if comment_body in ("/revix-ignore", "/revix-approve", "/revix-ok"):
                 repo = payload["repository"]["full_name"]
-                num = payload["issue"]["number"]
+                issue = payload["issue"]
+                comment = payload["comment"]
+                if issue.get("pull_request") is None or comment.get("author_association") not in (
+                    "OWNER",
+                    "MEMBER",
+                    "COLLABORATOR",
+                ):
+                    logger.warning("Unauthorized or non-PR override command ignored")
+                    return {"msg": "accepted"}
+
+                num = issue["number"]
                 inst_id = payload["installation"]["id"]
 
                 logger.info(
@@ -164,7 +174,9 @@ async def github_webhook(
                 github = GitHubService()
                 try:
                     token = await github.get_token(inst_id)
-                    check_run_id = await queue_repo.get_latest_check_run_id(repo, num)
+                    pr = await github.fetch_pull_request(repo, num, token)
+                    head_sha = pr["head"]["sha"]
+                    check_run_id = await queue_repo.get_check_run_id(repo, num, head_sha)
                     if check_run_id:
                         await github.update_check_run(
                             repo=repo,

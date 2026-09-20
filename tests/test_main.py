@@ -77,3 +77,76 @@ def test_webhook_already_exists(mock_queue_repo: MagicMock) -> None:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {"msg": "already exists"}
+
+
+def test_issue_comment_override_requires_authorization_and_pull_request(
+    mock_queue_repo: MagicMock,
+) -> None:
+    with patch("app.main.verify_signature", return_value=None):
+        payload = {
+            "action": "created",
+            "comment": {"body": "/revix-approve", "author_association": "NONE"},
+            "issue": {"number": 1},
+            "repository": {"full_name": "owner/repo"},
+            "installation": {"id": 123},
+        }
+
+        response = client.post(
+            "/api/webhooks/github",
+            headers={"X-GitHub-Event": "issue_comment", "X-Hub-Signature-256": "sha256=valid"},
+            json=payload,
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_queue_repo.get_check_run_id.assert_not_called()
+
+
+def test_authorized_issue_comment_cannot_override_normal_issue(mock_queue_repo: MagicMock) -> None:
+    with patch("app.main.verify_signature", return_value=None):
+        payload = {
+            "action": "created",
+            "comment": {"body": "/revix-approve", "author_association": "OWNER"},
+            "issue": {"number": 1},
+            "repository": {"full_name": "owner/repo"},
+            "installation": {"id": 123},
+        }
+
+        response = client.post(
+            "/api/webhooks/github",
+            headers={"X-GitHub-Event": "issue_comment", "X-Hub-Signature-256": "sha256=valid"},
+            json=payload,
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_queue_repo.get_check_run_id.assert_not_called()
+
+
+def test_issue_comment_override_binds_to_current_pr_head(mock_queue_repo: MagicMock) -> None:
+    mock_queue_repo.get_check_run_id = AsyncMock(return_value=456)
+    github = MagicMock()
+    github.get_token = AsyncMock(return_value="token")
+    github.fetch_pull_request = AsyncMock(return_value={"head": {"sha": "sha123"}})
+    github.update_check_run = AsyncMock()
+    github.close = AsyncMock()
+
+    with (
+        patch("app.main.verify_signature", return_value=None),
+        patch("app.main.GitHubService", return_value=github),
+    ):
+        payload = {
+            "action": "created",
+            "comment": {"body": "/revix-approve", "author_association": "MEMBER"},
+            "issue": {"number": 1, "pull_request": {"url": "https://api.github.com/repos/owner/repo/pulls/1"}},
+            "repository": {"full_name": "owner/repo"},
+            "installation": {"id": 123},
+        }
+
+        response = client.post(
+            "/api/webhooks/github",
+            headers={"X-GitHub-Event": "issue_comment", "X-Hub-Signature-256": "sha256=valid"},
+            json=payload,
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_queue_repo.get_check_run_id.assert_awaited_once_with("owner/repo", 1, "sha123")
+        github.update_check_run.assert_awaited_once()
